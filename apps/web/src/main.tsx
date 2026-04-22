@@ -1,10 +1,43 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { Layout } from "./components/Layout";
+import { LoginPage } from "./pages/LoginPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { DatasetDetailPage } from "./pages/DatasetDetailPage";
+import { WorkviewPage } from "./pages/WorkviewPage";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
-  </React.StrictMode>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+
+        {/* Workview is full-screen, no shell */}
+        <Route element={<ProtectedRoute />}>
+          <Route
+            path="/projects/:projectId/datasets/:datasetId/workview/:imageId"
+            element={<WorkviewPage />}
+          />
+        </Route>
+
+        {/* App shell */}
+        <Route element={<ProtectedRoute />}>
+          <Route element={<Layout />}>
+            <Route path="/" element={<Navigate to="/projects" replace />} />
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+            <Route
+              path="/projects/:projectId/datasets/:datasetId"
+              element={<DatasetDetailPage />}
+            />
+            <Route path="*" element={<div className="p-8 text-neutral-500">Not found</div>} />
+          </Route>
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  </React.StrictMode>,
 );

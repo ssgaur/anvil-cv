@@ -39,3 +39,9 @@ tmp/
 *.pt
 *.onnx
 *.npz
+
+# Frontend build & test artifacts
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/e2e-result.png
+.env.bak
