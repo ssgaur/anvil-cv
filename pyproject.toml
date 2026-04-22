@@ -1,0 +1,30 @@
+[project]
+name = "anvil-cv"
+version = "0.0.1"
+description = "Open-source image annotation platform with built-in SAM2 fine-tuning"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Shailendra Singh" }]
+
+[tool.uv.workspace]
+members = ["apps/api", "apps/ml", "apps/worker", "packages/storage"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "node_modules", "checkpoints"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+exclude = ["node_modules", ".venv", "checkpoints"]
+
+[tool.pytest.ini_options]
+testpaths = ["apps", "packages"]
+python_files = ["test_*.py"]
