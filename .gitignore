@@ -30,12 +30,12 @@ build/
 *.swp
 .DS_Store
 
-# Anvil runtime data
+# Anvil runtime
 data/
-storage/
+logs/
 checkpoints/
+vendor/
+tmp/
 *.pt
 *.onnx
-
-# Docker
-.docker-data/
+*.npz

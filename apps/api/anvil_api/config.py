@@ -10,9 +10,7 @@ class Settings(BaseSettings):
 
     storage_provider: str = "local"
     storage_bucket: str = "anvil"
-    minio_endpoint: str = "http://localhost:9000"
-    minio_root_user: str = "anvil"
-    minio_root_password: str = "anvilanvil"
+    storage_root: str = "./data"  # for local provider
 
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
