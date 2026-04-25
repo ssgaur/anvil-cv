@@ -5,48 +5,76 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)]()
 
-Anvil is an alternative to V7 Labs Darwin, CVAT, and Roboflow — but the model **learns from your team as you label**. Annotate a few hundred images, click *Fine-tune*, and the next batch is auto-labeled by your domain-specific model. Active learning surfaces the highest-uncertainty images first so every label counts more.
+Anvil is an OSS alternative to V7 Labs Darwin / CVAT / Roboflow with one differentiator they don't have: the model **learns from your team as you label**. Annotate a few dozen images, click *Fine-tune*, and the next batch is auto-labeled by your domain-specific SAM2. Active learning surfaces the highest-uncertainty images first so every label counts more.
+
+Runs on a **single M1 16 GB laptop** for development — no GPU cluster required.
 
 ## Why Anvil
 
-| | V7 Darwin | CVAT | Roboflow | **Anvil** |
-|--|--|--|--|--|
-| Open source | ❌ | ✅ | partial | ✅ Apache 2.0 |
-| Built-in SAM2 fine-tuning | ❌ | ❌ | ❌ | ✅ |
-| Active learning queue | ❌ | ❌ | partial | ✅ |
-| Self-hostable, single command | ❌ | ✅ | ❌ | ✅ |
-| Embedding pre-compute (instant click-to-segment) | ✅ | ❌ | ✅ | ✅ |
-| Per-seat pricing | $500/mo | free | $$ | **free** |
+|                                                  | V7 Darwin   | CVAT | Roboflow | **Anvil**         |
+| ------------------------------------------------ | ----------- | ---- | -------- | ----------------- |
+| Open source                                      | ❌           | ✅    | partial  | ✅ Apache 2.0      |
+| Built-in SAM2 fine-tuning (LoRA)                 | ❌           | ❌    | ❌        | ✅                 |
+| Per-class IoU + A/B model compare                | partial     | ❌    | partial  | ✅                 |
+| Active-learning queue (uncertainty sort)         | ❌           | ❌    | partial  | ✅                 |
+| Self-hostable, single command                    | ❌           | ✅    | ❌        | ✅                 |
+| Embedding pre-compute (instant click-to-segment) | ✅           | ❌    | ✅        | ✅                 |
+| Spatial review comments                          | ✅           | ❌    | ❌        | ✅                 |
+| COCO instance-seg import & export                | ✅           | ✅    | ✅        | ✅                 |
+| Pricing                                          | $500/seat/mo | free | $$       | **free**          |
 
-## Quick start (dev)
+## What works today (alpha)
+
+- 🖼️ **Workview** — Polygon, Bbox (8-handle resize), Brush (paint → polygon), Click-to-segment with multi-prompt SAM2, vertex editing, hold-Space pan, undo/redo, keyboard cheatsheet
+- 🧠 **SAM2 fine-tune** — LoRA adapter on the mask decoder, runs on M1 CPU in seconds, persisted as model versions
+- 📈 **Model versions** — per-class IoU, val-IoU sparkline, side-by-side **A/B compare** with per-image deltas, set-active, delete
+- 🎯 **Active learning** — "Next uncertain image" queue ranks unlabeled images by model confidence
+- 👥 **Review flow** — Approve / Reject / Needs-changes statuses, predefined reject reasons, **spatial pin comments** on the canvas
+- 🏷️ **Class manager** — curated WCAG-AA palette, per-class **properties** (Single-select, Multi-select, Text)
+- 📦 **COCO** — drag-drop ZIP import (bootstraps a dataset) and one-click instance-seg export
+- 🔐 **Auth + Projects** — JWT, projects, datasets, image upload with embedding pre-compute on the worker
+
+See [docs/FEATURES.md](docs/FEATURES.md) for the full list with screenshots and shortcuts.
+
+## Quick start
+
+**Option A — local dev on macOS (recommended for hacking):** see [docs/DEV_SETUP.md](docs/DEV_SETUP.md). Three processes (`api`, `ml`, `web`), Postgres via Homebrew, ~5 minutes from clone to running.
+
+**Option B — Docker compose** *(work in progress; tracked in `docker-compose-dev` todo)*
 
 ```bash
 git clone https://github.com/ssgaur/anvil-cv.git
-cd anvil-cv
-cp .env.example .env
+cd anvil-cv && cp .env.example .env
 docker compose up
 ```
 
-Open http://localhost:5173
+Then open <http://localhost:5173>.
 
 ## Repo layout
 
 ```
 anvil-cv/
 ├── apps/
-│   ├── web/        Vite + React + TS frontend
-│   ├── api/        FastAPI REST API + Postgres
-│   ├── ml/         FastAPI + SAM2 inference & fine-tuning
-│   └── worker/     Arq background jobs (embeddings, training, exports)
+│   ├── web/        Vite + React + TS + Konva (workview canvas)
+│   ├── api/        FastAPI + SQLModel + Postgres (REST + auth)
+│   ├── ml/         FastAPI + SAM2 (predict, train, evaluate)
+│   └── worker/     Arq jobs (embedding pre-compute, training)
 ├── packages/
-│   └── storage/    Pluggable storage (Local / S3 / Azure / GCS / MinIO)
-├── docs/           Documentation site
-└── docker-compose.yml
+│   └── storage/    Pluggable storage (Local / S3 / MinIO / Azure / GCS)
+├── docs/           Architecture, features, fine-tune deep-dive, API ref, FAQ
+├── scripts/        E2E smoke tests (one per major feature)
+└── .github/        Copilot CLI onboarding + CI workflows + issue templates
 ```
 
-## Roadmap
+## Documentation
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). v0 ships annotation loop + fine-tune button + active learning + COCO/YOLO export.
+- [Architecture](docs/ARCHITECTURE.md) — services, data flow, encoder cache
+- [Features](docs/FEATURES.md) — every tool with shortcuts
+- [Fine-tuning deep-dive](docs/FINE_TUNING.md) — LoRA on M1, vs Meta's full fine-tune
+- [API reference](docs/API.md) — all REST endpoints
+- [Dev setup](docs/DEV_SETUP.md) — local 3-process recipe
+- [FAQ](docs/FAQ.md)
+- [Roadmap & future work](docs/ROADMAP.md)
 
 ## License
 

@@ -1,0 +1,114 @@
+# Features
+
+Comprehensive list of what's in `main`. Each feature has a tiny "How to use" and the relevant keyboard shortcut where applicable.
+
+## Workview (annotation canvas)
+
+The single page where 90% of user time is spent: `WorkviewPage.tsx`.
+
+### Tools
+
+| Tool | Shortcut | What it does |
+| --- | --- | --- |
+| **Polygon** | `P` | Click to drop vertices, double-click or `Enter` to close |
+| **Bbox** | `B` | Drag to draw. **8-handle resize** (4 corners + 4 edges) + body drag to move |
+| **Brush** | `R` | Paint a mask. On release, marching-squares converts paint → polygon |
+| **Click-to-segment** | `S` | Single click = SAM2 mask. **Multi-prompt:** Shift-click = positive, Alt-click = negative, drag = box prompt. All combined |
+| **Vertex edit** | (auto) | Selected polygon — drag a vertex, click a midpoint to insert |
+| **Pan** | hold `Space` + drag | |
+| **Undo / Redo** | `⌘Z` / `⇧⌘Z` | Per-image stack, last 20 actions |
+| **Fit / 1:1** | `F` / `1` | Snap zoom |
+| **Cheatsheet** | `?` or `H` | Toggle help overlay |
+
+### Interaction polish
+
+- Active class color follows the vertex/edge of the in-progress shape
+- Hover an existing annotation → it highlights and shows class name
+- Right-click on a polygon vertex → delete vertex
+- Hold-`Space` cursor changes to grab/grabbing
+- Status bar shows current zoom %, mouse coords, selected tool
+
+## SAM2 fine-tuning (the wedge)
+
+`apps/ml/anvil_ml/training.py` + `apps/ml/anvil_ml/lora.py`
+
+### How to use
+
+1. Project → **Models** tab → **Train new version**
+2. Pick the dataset slice (default: all approved annotations)
+3. Optionally filter by class
+4. Click **Start training**
+5. Watch per-epoch loss + val IoU stream into the row
+6. When done, **Set active** → all subsequent click-to-segment calls use the adapter
+
+Default config: rank 8, alpha 16, lr 1e-4, epochs 20, device CPU. Trainable params ≈ 47K.
+
+Deep-dive in [FINE_TUNING.md](FINE_TUNING.md).
+
+## Model versions + A/B compare
+
+`ProjectDetailPage.tsx::ModelsTab`
+
+- **Version list** — each row shows status, mean IoU, **per-class IoU bars** (color-thresholded green/yellow/red), val-IoU **sparkline** across epochs, "Δ vs base" callout, **Set active**, **Delete**
+- **Compare panel** — pick A and B; runs both adapters on N (default 12) approved annotations
+  - Side-by-side per-class IoU table with deltas
+  - Collapsible per-image breakdown
+  - Either side can be null → base SAM2 (lets you sanity-check "did fine-tune actually help?")
+
+## Active learning
+
+The "Next uncertain image" button on `DatasetDetailPage.tsx` ranks unlabeled images by the active model's mask-score entropy and serves the most-uncertain one first. Endpoint: `GET /api/projects/{p}/datasets/{d}/next-uncertain`.
+
+## Class manager + class properties
+
+`ProjectDetailPage.tsx::ClassesTab`
+
+- **Curated palette** — 24 WCAG-AA-contrast-checked colors. No clashing reds.
+- **Per-class properties** (`apps/api/anvil_api/models.py::ClassProperty`):
+  - **Single-select** — radio (e.g., damage severity: minor/major/critical)
+  - **Multi-select** — checkboxes (e.g., visible features: stem/leaf/blemish)
+  - **Text** — freeform note
+- Annotation property values stored in `Annotation.properties` JSONB keyed by property id
+
+## Review flow
+
+`apps/api/anvil_api/routes/images.py::patch_review` + `WorkviewPage.tsx`
+
+- Per-image review status: `pending` / `approved` / `rejected` / `needs_changes`
+- **Predefined reject reasons** (configurable per project): "Mask too tight", "Wrong class", "Missing instance", etc.
+- **Spatial pin comments** (`apps/api/anvil_api/routes/comments.py`) — click anywhere on the canvas to drop a pin, write a comment. Comments anchored to image coords; survive zoom/pan.
+- Reviewer view filters: pending / mine / rejected
+
+## COCO import & export
+
+- **Export:** `GET /api/datasets/{id}/export/coco` → ZIP with `instances.json` + `images/`
+- **Import:** drag-drop a COCO ZIP onto the dataset → bootstraps classes + annotations
+- Supports polygon segmentation; bbox-only annotations imported as bbox
+
+## Project / dataset / image management
+
+- Multi-dataset projects
+- Image upload (multi-file, with progress)
+- Embedding pre-compute kicked off automatically on the worker (Arq)
+- Thumbnails generated on upload
+
+## Auth
+
+- JWT (HS256), 7-day default expiry
+- Email + password signup/login
+- `Authorization: Bearer <token>` on all `/api/` routes except `/auth/*`
+
+## Coverage matrix
+
+| Feature | Backend | Frontend | E2E test |
+| --- | --- | --- | --- |
+| Auth | ✅ | ✅ | `e2e_smoketest.py` |
+| Project / Dataset / Image | ✅ | ✅ | `e2e_smoketest.py` |
+| Polygon / Bbox / Brush / Click | ✅ | ✅ | `e2e_smoketest.py`, `bbox_resize_e2e.py`, `undo_redo_e2e.py` |
+| SAM2 predict | ✅ | ✅ | `sam2_smoketest.py` |
+| LoRA fine-tune | ✅ | ✅ | `finetune_e2e.py` |
+| Model versions + A/B | ✅ | ✅ | `model_versions_e2e.py` |
+| Review flow + comments | ✅ | ✅ | `review_flow_e2e.py` |
+| Class properties | ✅ | ✅ | `class_properties_e2e.py` |
+| COCO export + import | ✅ | ✅ | `coco_roundtrip_e2e.py` |
+| Quality dashboard | ❌ | ❌ | — *(planned)* |

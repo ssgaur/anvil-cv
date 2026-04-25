@@ -1,43 +1,60 @@
 # Anvil Roadmap
 
-## Phase 0 — Foundations
-- [x] Repo scaffold (this commit)
-- [ ] Docker compose dev stack (Postgres + Redis + MinIO + API + ML + Worker + Web)
-- [ ] CI: lint, typecheck, tests, docker build
-- [ ] Domain model + Alembic migrations
+Live status. Done = shipped to `main`. Order within a phase is suggested, not mandatory.
 
-## Phase 1 — Core annotation loop
-- [ ] Auth (email+password + GitHub OAuth)
-- [ ] Org / Project / Dataset CRUD
-- [ ] Image upload + thumbnail generation
-- [ ] **Embedding pre-compute on upload** (perf wedge vs V7)
-- [ ] Annotation canvas: Polygon, Bbox, Brush + zoom/pan + vertex edit
-- [ ] Class manager with curated WCAG-AA color palette
-- [ ] Auto-annotate via cached embeddings (single unified mode)
-- [ ] COCO / YOLO / Pascal VOC / mask PNG export
+## Phase 0 — Foundations  ✅
+- [x] Repo scaffold (monorepo: web, api, ml, worker, storage)
+- [x] Domain model + Postgres + SQLModel
+- [x] CI (ruff, mypy, web typecheck)
+- [ ] **`docker-compose-dev`** — one-command install (Postgres + Redis + MinIO + 3 services + web)
 
-## Phase 2 — The wedge
-- [ ] Fine-tune UI: dataset slice picker + LoRA config + live loss/IoU chart
-- [ ] Model versions list + per-class eval IoU + A/B compare
-- [ ] Promote-to-default auto-annotate
-- [ ] Active-learning "Next" button (uncertainty-ranked)
+## Phase 1 — Core annotation loop  ✅
+- [x] JWT auth (signup / login)
+- [x] Project / Dataset CRUD
+- [x] Image upload + thumbnails + **embedding pre-compute on the worker**
+- [x] Annotation canvas: Polygon, Bbox (8-handle resize + body drag), Brush (paint → marching-squares polygon)
+- [x] Vertex editing on polygons
+- [x] Click-to-segment via cached embeddings
+- [x] **Multi-prompt SAM2** (positive/negative clicks + box prompt combined)
+- [x] Per-image undo/redo (last 20)
+- [x] Hold-Space pan, Fit / 1:1 controls, zoom % indicator
+- [x] Keyboard shortcuts cheatsheet (`?` / `H`)
+- [x] Class manager with curated WCAG-AA palette
+- [x] Per-class properties: Single-select, Multi-select, Text
+- [x] COCO instance-seg export
+- [x] COCO instance-seg import (drag-drop ZIP → bootstrap dataset)
+- [ ] **`annotation-canvas`** — small a11y / focus-ring / timer polish
 
-## Phase 3 — Team & quality
-- [ ] Review flow + predefined reject reasons + spatial comments
-- [ ] Quality dashboard (per-annotator sparklines, IoU agreement matrix)
-- [ ] Members + roles
-- [ ] In-UI COCO zip drag-drop import
+## Phase 2 — The wedge  ✅
+- [x] LoRA fine-tune of SAM2 mask decoder (runs on M1 CPU)
+- [x] Model versions list with per-epoch metrics
+- [x] **Per-class IoU** bars + val-IoU sparkline
+- [x] **A/B compare** — side-by-side per-class table + per-image deltas
+- [x] Delete model version (clears active, removes adapter file)
+- [x] Promote-to-active (auto-annotate uses the active version)
+- [x] Active-learning **Next uncertain** queue (entropy-ranked)
 
-## Phase 4 — Polish & launch
-- [ ] HuggingFace datasets export
-- [ ] Docs site (Astro Starlight)
-- [ ] Public demo (Hetzner + Replicate)
-- [ ] Show HN / Reddit launch
+## Phase 3 — Team & quality  partial
+- [x] Review flow: Approve / Reject / Needs-changes
+- [x] Predefined reject reasons
+- [x] **Spatial pin comments** anchored to canvas coords
+- [ ] **`quality-dashboard`** — per-annotator throughput + IoU agreement matrix
+- [ ] Members + roles (org-level RBAC)
+
+## Phase 4 — Polish & launch  open
+- [ ] **`finalize-name-domain`** — secure final name + domain (anvil.cv?)
+- [ ] **`docs-site`** — Astro Starlight built from `docs/`
+- [ ] **`public-demo`** — Hetzner + Replicate-hosted demo project
+- [ ] **`launch-post`** — Show HN / Reddit / dev.to write-up
+- [ ] **`launch`** — actually press post
 
 ## Out of scope (v0)
 - Workflow Builder
-- Polyline / Keypoint / Directional Vector / Instance ID
-- Video annotation
+- Polyline / Keypoint / Directional Vector / Instance ID tools
+- Video annotation (multi-frame / masklets)
 - Multi-org SaaS billing
 - SSO / SAML
-- Consensus annotation
+- Consensus / N-of-M annotation
+
+## Future ideas (post-v0, ungroomed)
+See [FUTURE.md](FUTURE.md).
