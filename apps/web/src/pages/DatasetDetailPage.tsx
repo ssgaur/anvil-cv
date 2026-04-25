@@ -10,6 +10,8 @@ export function DatasetDetailPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const cocoInput = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
   const [filter, setFilter] = useState<"all" | "ready" | "uploaded" | "embedding" | "failed">("all");
 
   const reload = useCallback(async () => {
@@ -51,7 +53,26 @@ export function DatasetDetailPage() {
 
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
-    upload(e.dataTransfer.files);
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    // If a single .zip dropped, treat as COCO import
+    if (files.length === 1 && /\.zip$/i.test(files[0].name)) {
+      const f = files[0];
+      setImporting(true);
+      api.importCocoZip(projectId, datasetId, f)
+        .then(async (r) => {
+          alert(
+            `Imported ${r.images_imported} images, ${r.polygons_imported} polygons, ` +
+            `${r.bboxes_imported} bboxes.\n` +
+            `${r.new_classes} new classes, ${r.matched_existing_classes} reused.`
+          );
+          await reload();
+        })
+        .catch((err) => alert(err instanceof Error ? err.message : "import failed"))
+        .finally(() => setImporting(false));
+      return;
+    }
+    upload(files);
   }
 
   const filtered = filter === "all" ? images : images.filter((i) => i.status === filter);
@@ -82,6 +103,36 @@ export function DatasetDetailPage() {
           <div className="flex gap-2">
             <input ref={fileInput} type="file" multiple accept="image/*" hidden
               onChange={(e) => upload(e.target.files)} />
+            <input ref={cocoInput} type="file" accept=".zip,application/zip" hidden
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                setImporting(true);
+                try {
+                  const r = await api.importCocoZip(projectId, datasetId, f);
+                  alert(
+                    `Imported ${r.images_imported} images, ${r.polygons_imported} polygons, ` +
+                    `${r.bboxes_imported} bboxes.\n` +
+                    `${r.new_classes} new classes, ${r.matched_existing_classes} reused.` +
+                    (r.images_skipped_missing_or_invalid ? `\nSkipped ${r.images_skipped_missing_or_invalid} images (missing/invalid).` : "") +
+                    (r.rle_segmentations_skipped ? `\nSkipped ${r.rle_segmentations_skipped} RLE segmentations (not yet supported).` : "")
+                  );
+                  await reload();
+                } catch (err) {
+                  alert(err instanceof Error ? err.message : "import failed");
+                } finally {
+                  setImporting(false);
+                  if (cocoInput.current) cocoInput.current.value = "";
+                }
+              }} />
+            <button
+              onClick={() => cocoInput.current?.click()}
+              disabled={importing}
+              title="Drag-drop or pick a COCO export ZIP (annotations.json + images) to bootstrap this dataset"
+              className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-100 font-medium px-4 py-2 rounded text-sm border border-neutral-700"
+            >
+              {importing ? "Importing…" : "Import COCO"}
+            </button>
             <button
               onClick={async () => {
                 try {

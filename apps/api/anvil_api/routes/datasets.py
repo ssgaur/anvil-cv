@@ -224,3 +224,279 @@ def export_coco(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{fn}"'},
     )
+
+
+# -------- COCO import --------
+import re
+from pathlib import Path, PurePosixPath
+from uuid import uuid4
+
+from fastapi import BackgroundTasks, File, UploadFile
+from PIL import Image as PILImage
+
+from anvil_api.models import (
+    AnnotationSource,
+    GeometryType,
+    ImageStatus,
+)
+
+# Same palette as ClassesTab default (kept tiny — only used when COCO
+# brings in a category we've never seen before).
+_FALLBACK_PALETTE = [
+    "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#a855f7",
+    "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#14b8a6",
+]
+
+
+def _slug_color(name: str) -> str:
+    # Stable colour from the class name so re-imports don't shuffle.
+    h = sum(ord(c) for c in name) if name else 0
+    return _FALLBACK_PALETTE[h % len(_FALLBACK_PALETTE)]
+
+
+def _coco_segmentation_to_points(seg) -> list[list[float]] | None:
+    """Take COCO `segmentation` and return a flat polygon point list.
+
+    - If it's a list of polygons (list[list[float]]): use the LARGEST by
+      perimeter (most COCO datasets only have one ring).
+    - If it's a dict (RLE): unsupported for now → return None.
+    """
+    if not seg:
+        return None
+    if isinstance(seg, dict):
+        return None  # RLE — skip (no mask decoder client-side yet)
+    if isinstance(seg, list) and seg and isinstance(seg[0], (int, float)):
+        # Some exporters give a flat list at the top level.
+        seg = [seg]
+    if not isinstance(seg, list):
+        return None
+    best: list[float] | None = None
+    best_per = -1.0
+    for ring in seg:
+        if not isinstance(ring, list) or len(ring) < 6 or len(ring) % 2:
+            continue
+        # perimeter for tie-breaking when multiple rings
+        per = 0.0
+        for i in range(0, len(ring) - 2, 2):
+            dx = ring[i + 2] - ring[i]
+            dy = ring[i + 3] - ring[i + 1]
+            per += (dx * dx + dy * dy) ** 0.5
+        if per > best_per:
+            best_per = per
+            best = ring
+    if not best:
+        return None
+    return [[float(best[i]), float(best[i + 1])] for i in range(0, len(best), 2)]
+
+
+@router.post("/{dataset_id}/import/coco")
+async def import_coco(
+    project_id: UUID, dataset_id: UUID,
+    session: SessionDep, user: CurrentUser, background: BackgroundTasks,
+    file: UploadFile = File(...),
+) -> dict:
+    """Import a COCO instance-segmentation ZIP into this dataset.
+
+    Expected zip layout (matches our /export/coco):
+      annotations.json
+      images/<file_name>      (any path containing the file_name works)
+
+    Behaviour:
+      - Categories: matched against existing project classes by lowercase
+        name; new categories become new classes with a deterministic colour
+      - Images: stored + queued for SAM2 embedding; original COCO image_id
+        is mapped to a freshly-minted Anvil image id
+      - Annotations: polygons preferred (segmentation → points); bbox-only
+        annotations imported as bbox; RLE segmentations are skipped (not
+        supported yet) and counted in the response
+      - Filenames not present in the zip are skipped (counted)
+    """
+    p = _check(session, project_id, user)
+    d = session.get(Dataset, dataset_id)
+    if not d or d.project_id != project_id:
+        raise HTTPException(404, "dataset not found")
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(415, "expected a .zip file")
+
+    payload = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(payload))
+    except zipfile.BadZipFile as e:
+        raise HTTPException(400, f"invalid zip: {e}") from e
+
+    # Locate annotations.json (any depth in the zip)
+    ann_name = next((n for n in zf.namelist() if n.endswith("annotations.json")), None)
+    if not ann_name:
+        raise HTTPException(400, "annotations.json not found in zip")
+    try:
+        coco = json.loads(zf.read(ann_name).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise HTTPException(400, f"annotations.json: {e}") from e
+
+    if not isinstance(coco, dict) or "images" not in coco or "annotations" not in coco:
+        raise HTTPException(400, "annotations.json missing 'images' or 'annotations'")
+
+    # Build a map from base filename → zip member, for image lookup.
+    # We look at any member whose final path component matches the COCO file_name.
+    by_basename: dict[str, str] = {}
+    for member in zf.namelist():
+        if member.endswith("/"):
+            continue
+        base = PurePosixPath(member).name
+        # Last write wins for duplicates — stable enough for our exports
+        by_basename[base] = member
+
+    # ---- Categories → classes (existing-by-lower-name match)
+    existing_classes = list(session.exec(select(Class).where(Class.project_id == project_id)).all())
+    by_lname = {c.name.lower(): c for c in existing_classes}
+    coco_cat_to_class: dict[int, Class] = {}
+    new_classes = 0
+    for cat in coco.get("categories") or []:
+        cname = (cat.get("name") or "").strip()
+        if not cname:
+            continue
+        cid = int(cat["id"])
+        existing = by_lname.get(cname.lower())
+        if existing:
+            coco_cat_to_class[cid] = existing
+            continue
+        new_cls = Class(
+            project_id=project_id,
+            name=cname,
+            color=_slug_color(cname),
+        )
+        session.add(new_cls)
+        session.flush()
+        by_lname[cname.lower()] = new_cls
+        coco_cat_to_class[cid] = new_cls
+        new_classes += 1
+
+    # ---- Images
+    n_images_imported = 0
+    n_images_skipped = 0
+    coco_img_to_anvil: dict[int, Image] = {}
+    new_image_records: list[Image] = []
+
+    for ci in coco.get("images") or []:
+        fname = ci.get("file_name") or ""
+        base = PurePosixPath(fname).name
+        member = by_basename.get(base)
+        if not member:
+            n_images_skipped += 1
+            continue
+        try:
+            data = zf.read(member)
+        except KeyError:
+            n_images_skipped += 1
+            continue
+        ext = Path(base).suffix.lower() or ".jpg"
+        if ext not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+            n_images_skipped += 1
+            continue
+
+        img_id = uuid4()
+        key = f"datasets/{d.id}/images/{img_id}{ext}"
+        storage.put(key, data)
+
+        # Probe + thumbnail (re-using the same approach as /upload)
+        try:
+            with PILImage.open(io.BytesIO(data)) as im:
+                w, h = im.size
+                im.thumbnail((256, 256))
+                tbuf = io.BytesIO()
+                im.convert("RGB").save(tbuf, format="JPEG", quality=80)
+                tkey = f"datasets/{d.id}/thumbs/{img_id}.jpg"
+                storage.put(tkey, tbuf.getvalue())
+        except Exception:
+            n_images_skipped += 1
+            continue
+
+        rec = Image(
+            id=img_id,
+            dataset_id=d.id,
+            filename=base,
+            storage_key=key,
+            thumbnail_key=tkey,
+            width=w,
+            height=h,
+            bytes=len(data),
+            status=ImageStatus.UPLOADED,
+        )
+        session.add(rec)
+        coco_img_to_anvil[int(ci["id"])] = rec
+        new_image_records.append(rec)
+        n_images_imported += 1
+
+    session.flush()  # so rec.id is final before annotations land
+
+    # ---- Annotations
+    n_polys = 0
+    n_bboxes = 0
+    n_rle_skipped = 0
+    n_no_image = 0
+    n_no_class = 0
+
+    for a in coco.get("annotations") or []:
+        cls = coco_cat_to_class.get(int(a.get("category_id", -1)))
+        if not cls:
+            n_no_class += 1
+            continue
+        img_rec = coco_img_to_anvil.get(int(a.get("image_id", -1)))
+        if not img_rec:
+            n_no_image += 1
+            continue
+        seg = a.get("segmentation")
+        bbox = a.get("bbox")
+        if isinstance(seg, dict):
+            n_rle_skipped += 1
+            continue
+        points = _coco_segmentation_to_points(seg) if seg else None
+        if points and len(points) >= 3:
+            session.add(Annotation(
+                image_id=img_rec.id,
+                class_id=cls.id,
+                geometry_type=GeometryType.POLYGON,
+                geometry={"points": points},
+                source=AnnotationSource.IMPORTED,
+                confidence=None,
+            ))
+            n_polys += 1
+        elif isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            bx, by_, bw, bh = (float(v) for v in bbox)
+            session.add(Annotation(
+                image_id=img_rec.id,
+                class_id=cls.id,
+                geometry_type=GeometryType.BBOX,
+                geometry={"x": bx, "y": by_, "w": bw, "h": bh},
+                source=AnnotationSource.IMPORTED,
+                confidence=None,
+            ))
+            n_bboxes += 1
+        else:
+            continue
+
+    session.commit()
+
+    # Queue embeddings for the freshly-imported images
+    for rec in new_image_records:
+        background.add_task(_run_embed_for_import, rec.id)
+
+    return {
+        "project_id": str(project_id),
+        "dataset_id": str(dataset_id),
+        "new_classes": new_classes,
+        "matched_existing_classes": len(coco_cat_to_class) - new_classes,
+        "images_imported": n_images_imported,
+        "images_skipped_missing_or_invalid": n_images_skipped,
+        "polygons_imported": n_polys,
+        "bboxes_imported": n_bboxes,
+        "rle_segmentations_skipped": n_rle_skipped,
+        "annotations_skipped_no_image": n_no_image,
+        "annotations_skipped_no_class": n_no_class,
+    }
+
+
+def _run_embed_for_import(image_id: UUID) -> None:
+    # Mirror images.py's _run_embed helper (kept local to avoid a circular import)
+    from anvil_api.routes.images import _run_embed
+    _run_embed(image_id)

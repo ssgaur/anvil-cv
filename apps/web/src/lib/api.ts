@@ -128,6 +128,25 @@ export const api = {
   },
   getImage: (id: string) => req<ImageRow>(`/api/images/${id}`),
 
+  importCocoZip: (projectId: string, datasetId: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<{
+      new_classes: number;
+      matched_existing_classes: number;
+      images_imported: number;
+      images_skipped_missing_or_invalid: number;
+      polygons_imported: number;
+      bboxes_imported: number;
+      rle_segmentations_skipped: number;
+      annotations_skipped_no_image: number;
+      annotations_skipped_no_class: number;
+    }>(
+      `/api/projects/${projectId}/datasets/${datasetId}/import/coco`,
+      { method: "POST", body: fd },
+    );
+  },
+
   // Classes
   listClasses: (projectId: string) =>
     req<ClassRow[]>(`/api/projects/${projectId}/classes`),
