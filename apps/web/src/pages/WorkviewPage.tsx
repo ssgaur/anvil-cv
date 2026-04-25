@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Circle, Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
 import Konva from "konva";
+import { extractLargestPolygon } from "../lib/brush";
 import { api, fileUrl } from "../lib/api";
 import type { Annotation, ClassRow, ImageRow, ModelVersion } from "../types";
 
-type Tool = "pan" | "auto" | "polygon" | "bbox";
+type Tool = "pan" | "auto" | "polygon" | "bbox" | "brush";
 
 export function WorkviewPage() {
   const { projectId = "", datasetId = "", imageId = "" } = useParams();
@@ -45,6 +46,83 @@ export function WorkviewPage() {
   const [editPoly, setEditPoly] = useState<[number, number][] | null>(null);
   // Snapshot of the annotation taken when entering edit mode (for undo of polygon edits)
   const editBeforeRef = useRef<Annotation | null>(null);
+
+  // ---- Brush tool
+  const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [maskVersion, setMaskVersion] = useState(0); // bump to force Konva re-render
+  const [hasBrushStrokes, setHasBrushStrokes] = useState(false);
+  const [brushSize, setBrushSize] = useState(24);    // image-space radius (px)
+  const brushingRef = useRef<{ erase: boolean; lastPt: [number, number] | null } | null>(null);
+
+  function ensureMaskCanvas(): HTMLCanvasElement | null {
+    if (!image) return null;
+    const cur = maskCanvasRef.current;
+    if (!cur || cur.width !== image.width || cur.height !== image.height) {
+      const c = document.createElement("canvas");
+      c.width = image.width;
+      c.height = image.height;
+      maskCanvasRef.current = c;
+    }
+    return maskCanvasRef.current;
+  }
+
+  function clearMask() {
+    const c = maskCanvasRef.current;
+    if (c) {
+      const ctx = c.getContext("2d");
+      ctx?.clearRect(0, 0, c.width, c.height);
+    }
+    setHasBrushStrokes(false);
+    setMaskVersion((v) => v + 1);
+  }
+
+  function paintStroke(from: [number, number] | null, to: [number, number], erase: boolean) {
+    const c = ensureMaskCanvas();
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    const cls = activeClassId ? classMap.get(activeClassId) : null;
+    const color = cls?.color ?? "#22c55e";
+    ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = brushSize * 2;
+    if (from) {
+      ctx.beginPath();
+      ctx.moveTo(from[0], from[1]);
+      ctx.lineTo(to[0], to[1]);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(to[0], to[1], brushSize, 0, Math.PI * 2);
+    ctx.fill();
+    setHasBrushStrokes(true);
+    setMaskVersion((v) => v + 1);
+  }
+
+  async function commitBrush() {
+    if (!image || !activeClassId || !maskCanvasRef.current) return;
+    const poly = extractLargestPolygon(maskCanvasRef.current, 32, 1.5);
+    if (poly.length < 3) {
+      setError("Brushed area too small to extract a polygon");
+      return;
+    }
+    try {
+      const a = await api.createAnnotation(imageId, {
+        class_id: activeClassId,
+        geometry_type: "polygon",
+        geometry: { points: poly },
+        source: "manual",
+      });
+      setAnnotations((arr) => [...arr, a]);
+      pushOp({ kind: "create", ann: a });
+      clearMask();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "save failed");
+    }
+  }
 
   // ---- Undo/redo (per-image, capped at 20)
   type HistOp =
@@ -193,6 +271,10 @@ export function WorkviewPage() {
     setUndoStack([]); setRedoStack([]);
     clearPrompts();
     setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
+    // Drop the brush canvas so the next image starts fresh.
+    maskCanvasRef.current = null;
+    setHasBrushStrokes(false);
+    setMaskVersion((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageId]);
 
@@ -268,12 +350,17 @@ export function WorkviewPage() {
       else if (e.key === "a") setTool("auto");
       else if (e.key === "p") setTool("polygon");
       else if (e.key === "b") setTool("bbox");
+      else if (e.key === "r") setTool("brush");
       else if (e.key === "Escape") {
         setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
         clearPrompts();
         setSelectedAnnId(null); setEditPoly(null);
+        if (tool === "brush") clearMask();
       }
       else if (e.key === "Enter" && tool === "polygon" && polyPoints.length >= 3) commitPolygon();
+      else if (e.key === "Enter" && tool === "brush" && hasBrushStrokes) commitBrush();
+      else if (e.key === "[" && tool === "brush") setBrushSize((s) => Math.max(2, Math.round(s * 0.8)));
+      else if (e.key === "]" && tool === "brush") setBrushSize((s) => Math.min(200, Math.round(s * 1.25)));
       else if (e.key === "Delete" || e.key === "Backspace") {
         if (hoverAnnId) deleteAnnotation(hoverAnnId);
       } else if (e.key === "ArrowRight") gotoSibling(1);
@@ -282,7 +369,7 @@ export function WorkviewPage() {
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack]);
+  }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes]);
 
   // Helpers
   function imagePoint(stageX: number, stageY: number): [number, number] {
@@ -387,7 +474,16 @@ export function WorkviewPage() {
   }
 
   // Mouse down/move/up — handles bbox tool AND auto-tool drag-to-box
-  function onMouseDown(_e: Konva.KonvaEventObject<MouseEvent>) {
+  function onMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
+    if (tool === "brush") {
+      const stage = stageRef.current; if (!stage) return;
+      const p = stage.getPointerPosition(); if (!p) return;
+      const pt = imagePoint(p.x, p.y);
+      const erase = e.evt.shiftKey || e.evt.altKey;
+      brushingRef.current = { erase, lastPt: pt };
+      paintStroke(null, pt, erase);
+      return;
+    }
     if (tool === "bbox") {
       const stage = stageRef.current; if (!stage) return;
       const p = stage.getPointerPosition(); if (!p) return;
@@ -406,6 +502,13 @@ export function WorkviewPage() {
   function onMouseMove() {
     const stage = stageRef.current; if (!stage) return;
     const p = stage.getPointerPosition(); if (!p) return;
+    if (tool === "brush" && brushingRef.current) {
+      const pt = imagePoint(p.x, p.y);
+      const { erase, lastPt } = brushingRef.current;
+      paintStroke(lastPt, pt, erase);
+      brushingRef.current = { erase, lastPt: pt };
+      return;
+    }
     if (tool === "bbox" && bboxStart) {
       setBboxEnd(imagePoint(p.x, p.y));
       return;
@@ -421,6 +524,10 @@ export function WorkviewPage() {
     }
   }
   async function onMouseUp() {
+    if (tool === "brush") {
+      brushingRef.current = null;
+      return;
+    }
     if (tool === "bbox" && bboxStart && bboxEnd && image && activeClassId) {
       const x = Math.min(bboxStart[0], bboxEnd[0]);
       const y = Math.min(bboxStart[1], bboxEnd[1]);
@@ -618,6 +725,7 @@ export function WorkviewPage() {
           <ToolBtn active={tool === "auto"} onClick={() => setTool("auto")} label="Auto-Annotate (A) — click to segment, shift-click +pt, alt-click −pt, drag for box" icon="✨" />
           <ToolBtn active={tool === "polygon"} onClick={() => setTool("polygon")} label="Polygon (P)" icon="⬡" />
           <ToolBtn active={tool === "bbox"} onClick={() => setTool("bbox")} label="Bounding Box (B)" icon="▭" />
+          <ToolBtn active={tool === "brush"} onClick={() => setTool("brush")} label="Brush (R) — paint a mask, shift to erase, [ / ] resize, Enter to commit" icon="🖌" />
         </div>
 
         {/* Canvas */}
@@ -665,6 +773,22 @@ export function WorkviewPage() {
                 <KImage image={htmlImage} x={0} y={0} width={htmlImage.width} height={htmlImage.height} />
               )}
             </Layer>
+
+            {/* Brush mask overlay (semi-transparent) */}
+            {tool === "brush" && image && maskCanvasRef.current && (
+              <Layer listening={false}>
+                <KImage
+                  image={maskCanvasRef.current}
+                  x={0}
+                  y={0}
+                  width={image.width}
+                  height={image.height}
+                  opacity={0.55}
+                  // re-render whenever the canvas pixel data changes
+                  key={`mask-${maskVersion}`}
+                />
+              </Layer>
+            )}
 
             {/* Existing annotations */}
             <Layer listening>
@@ -826,6 +950,38 @@ export function WorkviewPage() {
           {tool === "polygon" && polyPoints.length >= 3 && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
               {polyPoints.length} points · press Enter to save · Esc to clear
+            </div>
+          )}
+          {tool === "brush" && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg p-2 flex gap-3 items-center text-xs shadow-xl z-10">
+              <span className="text-neutral-300">Brush</span>
+              <label className="flex items-center gap-2 text-neutral-400">
+                Size
+                <input
+                  type="range"
+                  min={2}
+                  max={120}
+                  value={brushSize}
+                  onChange={(e) => setBrushSize(Number(e.target.value))}
+                  className="w-32"
+                />
+                <span className="w-8 text-right text-neutral-300">{brushSize}px</span>
+              </label>
+              <span className="text-neutral-500">shift = erase · [ ] resize</span>
+              <button
+                onClick={commitBrush}
+                disabled={!hasBrushStrokes}
+                className="bg-emerald-500 text-neutral-950 px-3 py-1 rounded font-medium hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500"
+              >
+                Commit (Enter)
+              </button>
+              <button
+                onClick={clearMask}
+                disabled={!hasBrushStrokes}
+                className="text-neutral-400 px-2 hover:text-neutral-100 disabled:opacity-40"
+              >
+                Clear (Esc)
+              </button>
             </div>
           )}
 
