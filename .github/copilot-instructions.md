@@ -13,44 +13,44 @@ Stack: **FastAPI + Postgres + SQLModel** (api), **FastAPI + SAM2 + PyTorch** (ml
 ```
 anvil-cv/
 ├── apps/
-│   ├── api/anvil_api/             FastAPI REST API
-│   │   ├── main.py                app entrypoint, includes routers
-│   │   ├── models.py              SQLModel tables (User, Project, Dataset, Image,
-│   │   │                          Annotation, Class, ClassProperty, ModelVersion,
-│   │   │                          Comment, ReviewStatus enum)
-│   │   ├── schemas.py             Pydantic request/response (XxxIn / XxxOut)
-│   │   ├── ml_client.py           HTTP client to ML service (predict/train/evaluate)
-│   │   ├── auth.py / db.py / config.py / storage.py
-│   │   └── routes/                annotations, auth, classes, comments, datasets,
-│   │                              images, models, projects
-│   ├── ml/anvil_ml/               FastAPI ML service (port 8001)
-│   │   ├── main.py                /predict, /train, /evaluate endpoints
-│   │   ├── engine.py              SAM2 model loader + cached predictor
-│   │   ├── lora.py                LoRA inject/save/load (~50 lines)
-│   │   └── training.py            train_lora() loop + _evaluate() + evaluate_with_adapter()
-│   ├── web/src/
-│   │   ├── pages/                 LoginPage, ProjectsPage, ProjectDetailPage,
-│   │   │                          DatasetDetailPage, WorkviewPage
-│   │   ├── components/            (workview tools, modals, dashboards)
-│   │   ├── lib/api.ts             typed REST client
-│   │   ├── store/                 zustand stores
-│   │   └── types/index.ts         shared TS types
-│   └── worker/anvil_worker/       Arq tasks (embed images at upload time)
-├── packages/storage/              Pluggable storage providers
-├── scripts/                       One E2E smoke test per major feature
-│   ├── e2e_smoketest.py           full project create + image upload + annotate
-│   ├── sam2_smoketest.py          SAM2 predict
-│   ├── finetune_e2e.py            LoRA train
-│   ├── model_versions_e2e.py      per-class IoU + A/B compare + delete
-│   ├── review_flow_e2e.py         approve/reject/comments
-│   ├── class_properties_e2e.py    single/multi/text attributes
-│   ├── coco_roundtrip_e2e.py      export then re-import
-│   ├── undo_redo_e2e.py / bbox_resize_e2e.py
-├── data/                          local Postgres + uploads dir (gitignored)
-├── logs/                          api.log / ml.log / web.log / worker.log
-├── checkpoints/                   SAM2 base weights (gitignored)
-├── docs/                          ARCHITECTURE, FEATURES, FINE_TUNING, API, DEV_SETUP, FAQ, ROADMAP
-└── .github/                       this file + CI + issue/PR templates
+│ ├── api/anvil_api/ FastAPI REST API
+│ │ ├── main.py app entrypoint, includes routers
+│ │ ├── models.py SQLModel tables (User, Project, Dataset, Image,
+│ │ │ Annotation, Class, ClassProperty, ModelVersion,
+│ │ │ Comment, ReviewStatus enum)
+│ │ ├── schemas.py Pydantic request/response (XxxIn / XxxOut)
+│ │ ├── ml_client.py HTTP client to ML service (predict/train/evaluate)
+│ │ ├── auth.py / db.py / config.py / storage.py
+│ │ └── routes/ annotations, auth, classes, comments, datasets,
+│ │ images, models, projects
+│ ├── ml/anvil_ml/ FastAPI ML service (port 8001)
+│ │ ├── main.py /predict, /train, /evaluate endpoints
+│ │ ├── engine.py SAM2 model loader + cached predictor
+│ │ ├── lora.py LoRA inject/save/load (~50 lines)
+│ │ └── training.py train_lora() loop + _evaluate() + evaluate_with_adapter()
+│ ├── web/src/
+│ │ ├── pages/ LoginPage, ProjectsPage, ProjectDetailPage,
+│ │ │ DatasetDetailPage, WorkviewPage
+│ │ ├── components/ (workview tools, modals, dashboards)
+│ │ ├── lib/api.ts typed REST client
+│ │ ├── store/ zustand stores
+│ │ └── types/index.ts shared TS types
+│ └── worker/anvil_worker/ Arq tasks (embed images at upload time)
+├── packages/storage/ Pluggable storage providers
+├── scripts/ One E2E smoke test per major feature
+│ ├── e2e_smoketest.py full project create + image upload + annotate
+│ ├── sam2_smoketest.py SAM2 predict
+│ ├── finetune_e2e.py LoRA train
+│ ├── model_versions_e2e.py per-class IoU + A/B compare + delete
+│ ├── review_flow_e2e.py approve/reject/comments
+│ ├── class_properties_e2e.py single/multi/text attributes
+│ ├── coco_roundtrip_e2e.py export then re-import
+│ ├── undo_redo_e2e.py / bbox_resize_e2e.py
+├── data/ local Postgres + uploads dir (gitignored)
+├── logs/ api.log / ml.log / web.log / worker.log
+├── checkpoints/ SAM2 base weights (gitignored)
+├── docs/ ARCHITECTURE, FEATURES, FINE_TUNING, API, DEV_SETUP, FAQ, ROADMAP
+└── .github/ this file + CI + issue/PR templates
 ```
 
 ## Current status (as of latest commit)
@@ -72,7 +72,7 @@ cd ~/PersonalDev/anvil-cv && source .venv/bin/activate
 set -a && source .env && set +a
 
 # ML first (api depends on it being up)
-(cd apps/ml  && PYTHONPATH=$PWD nohup python -m uvicorn anvil_ml.main:app  --host 127.0.0.1 --port 8001 </dev/null > ~/PersonalDev/anvil-cv/logs/ml.log  2>&1 & disown)
+(cd apps/ml && PYTHONPATH=$PWD nohup python -m uvicorn anvil_ml.main:app --host 127.0.0.1 --port 8001 </dev/null > ~/PersonalDev/anvil-cv/logs/ml.log 2>&1 & disown)
 (cd apps/api && PYTHONPATH=$PWD nohup python -m uvicorn anvil_api.main:app --host 127.0.0.1 --port 8000 </dev/null > ~/PersonalDev/anvil-cv/logs/api.log 2>&1 & disown)
 (cd apps/web && nohup npm run dev </dev/null > ~/PersonalDev/anvil-cv/logs/web.log 2>&1 & disown)
 ```

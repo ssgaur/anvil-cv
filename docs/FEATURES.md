@@ -51,9 +51,9 @@ Deep-dive in [FINE_TUNING.md](FINE_TUNING.md).
 
 - **Version list** — each row shows status, mean IoU, **per-class IoU bars** (color-thresholded green/yellow/red), val-IoU **sparkline** across epochs, "Δ vs base" callout, **Set active**, **Delete**
 - **Compare panel** — pick A and B; runs both adapters on N (default 12) approved annotations
-  - Side-by-side per-class IoU table with deltas
-  - Collapsible per-image breakdown
-  - Either side can be null → base SAM2 (lets you sanity-check "did fine-tune actually help?")
+ - Side-by-side per-class IoU table with deltas
+ - Collapsible per-image breakdown
+ - Either side can be null → base SAM2 (lets you sanity-check "did fine-tune actually help?")
 
 ## Active learning
 
@@ -65,9 +65,9 @@ The "Next uncertain image" button on `DatasetDetailPage.tsx` ranks unlabeled ima
 
 - **Curated palette** — 24 WCAG-AA-contrast-checked colors. No clashing reds.
 - **Per-class properties** (`apps/api/anvil_api/models.py::ClassProperty`):
-  - **Single-select** — radio (e.g., damage severity: minor/major/critical)
-  - **Multi-select** — checkboxes (e.g., visible features: stem/leaf/blemish)
-  - **Text** — freeform note
+ - **Single-select** — radio (e.g., damage severity: minor/major/critical)
+ - **Multi-select** — checkboxes (e.g., visible features: stem/leaf/blemish)
+ - **Text** — freeform note
 - Annotation property values stored in `Annotation.properties` JSONB keyed by property id
 
 ## Review flow
@@ -102,13 +102,13 @@ The "Next uncertain image" button on `DatasetDetailPage.tsx` ranks unlabeled ima
 
 | Feature | Backend | Frontend | E2E test |
 | --- | --- | --- | --- |
-| Auth | ✅ | ✅ | `e2e_smoketest.py` |
-| Project / Dataset / Image | ✅ | ✅ | `e2e_smoketest.py` |
-| Polygon / Bbox / Brush / Click | ✅ | ✅ | `e2e_smoketest.py`, `bbox_resize_e2e.py`, `undo_redo_e2e.py` |
-| SAM2 predict | ✅ | ✅ | `sam2_smoketest.py` |
-| LoRA fine-tune | ✅ | ✅ | `finetune_e2e.py` |
-| Model versions + A/B | ✅ | ✅ | `model_versions_e2e.py` |
-| Review flow + comments | ✅ | ✅ | `review_flow_e2e.py` |
-| Class properties | ✅ | ✅ | `class_properties_e2e.py` |
-| COCO export + import | ✅ | ✅ | `coco_roundtrip_e2e.py` |
-| Quality dashboard | ❌ | ❌ | — *(planned)* |
+| Auth | yes | yes | `e2e_smoketest.py` |
+| Project / Dataset / Image | yes | yes | `e2e_smoketest.py` |
+| Polygon / Bbox / Brush / Click | yes | yes | `e2e_smoketest.py`, `bbox_resize_e2e.py`, `undo_redo_e2e.py` |
+| SAM2 predict | yes | yes | `sam2_smoketest.py` |
+| LoRA fine-tune | yes | yes | `finetune_e2e.py` |
+| Model versions + A/B | yes | yes | `model_versions_e2e.py` |
+| Review flow + comments | yes | yes | `review_flow_e2e.py` |
+| Class properties | yes | yes | `class_properties_e2e.py` |
+| COCO export + import | yes | yes | `coco_roundtrip_e2e.py` |
+| Quality dashboard | no | no | planned |

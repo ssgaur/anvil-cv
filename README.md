@@ -11,28 +11,28 @@ Runs on a **single M1 16 GB laptop** for development — no GPU cluster required
 
 ## Why Anvil
 
-|                                                  | V7 Darwin   | CVAT | Roboflow | **Anvil**         |
+| | V7 Darwin | CVAT | Roboflow | **Anvil** |
 | ------------------------------------------------ | ----------- | ---- | -------- | ----------------- |
-| Open source                                      | ❌           | ✅    | partial  | ✅ Apache 2.0      |
-| Built-in SAM2 fine-tuning (LoRA)                 | ❌           | ❌    | ❌        | ✅                 |
-| Per-class IoU + A/B model compare                | partial     | ❌    | partial  | ✅                 |
-| Active-learning queue (uncertainty sort)         | ❌           | ❌    | partial  | ✅                 |
-| Self-hostable, single command                    | ❌           | ✅    | ❌        | ✅                 |
-| Embedding pre-compute (instant click-to-segment) | ✅           | ❌    | ✅        | ✅                 |
-| Spatial review comments                          | ✅           | ❌    | ❌        | ✅                 |
-| COCO instance-seg import & export                | ✅           | ✅    | ✅        | ✅                 |
-| Pricing                                          | $500/seat/mo | free | $$       | **free**          |
+| Open source | no | yes | partial | yes (Apache 2.0) |
+| Built-in SAM2 fine-tuning (LoRA) | no | no | no | yes |
+| Per-class IoU + A/B model compare | partial | no | partial | yes |
+| Active-learning queue (uncertainty sort) | no | no | partial | yes |
+| Self-hostable, single command | no | yes | no | yes |
+| Embedding pre-compute (instant click-to-segment) | yes | no | yes | yes |
+| Spatial review comments | yes | no | no | yes |
+| COCO instance-seg import & export | yes | yes | yes | yes |
+| Pricing | $500/seat/mo | free | $$ | **free** |
 
 ## What works today (alpha)
 
-- 🖼️ **Workview** — Polygon, Bbox (8-handle resize), Brush (paint → polygon), Click-to-segment with multi-prompt SAM2, vertex editing, hold-Space pan, undo/redo, keyboard cheatsheet
-- 🧠 **SAM2 fine-tune** — LoRA adapter on the mask decoder, runs on M1 CPU in seconds, persisted as model versions
-- 📈 **Model versions** — per-class IoU, val-IoU sparkline, side-by-side **A/B compare** with per-image deltas, set-active, delete
-- 🎯 **Active learning** — "Next uncertain image" queue ranks unlabeled images by model confidence
-- 👥 **Review flow** — Approve / Reject / Needs-changes statuses, predefined reject reasons, **spatial pin comments** on the canvas
-- 🏷️ **Class manager** — curated WCAG-AA palette, per-class **properties** (Single-select, Multi-select, Text)
-- 📦 **COCO** — drag-drop ZIP import (bootstraps a dataset) and one-click instance-seg export
-- 🔐 **Auth + Projects** — JWT, projects, datasets, image upload with embedding pre-compute on the worker
+- **Workview** — Polygon, Bbox (8-handle resize), Brush (paint → polygon), Click-to-segment with multi-prompt SAM2, vertex editing, hold-Space pan, undo/redo, keyboard cheatsheet
+- **SAM2 fine-tune** — LoRA adapter on the mask decoder, runs on M1 CPU in seconds, persisted as model versions
+- **Model versions** — per-class IoU, val-IoU sparkline, side-by-side **A/B compare** with per-image deltas, set-active, delete
+- **Active learning** — "Next uncertain image" queue ranks unlabeled images by model confidence
+- **Review flow** — Approve / Reject / Needs-changes statuses, predefined reject reasons, **spatial pin comments** on the canvas
+- **Class manager** — curated WCAG-AA palette, per-class **properties** (Single-select, Multi-select, Text)
+- **COCO** — drag-drop ZIP import (bootstraps a dataset) and one-click instance-seg export
+- **Auth + Projects** — JWT, projects, datasets, image upload with embedding pre-compute on the worker
 
 See [docs/FEATURES.md](docs/FEATURES.md) for the full list with screenshots and shortcuts.
 
@@ -55,15 +55,15 @@ Then open <http://localhost:5173>.
 ```
 anvil-cv/
 ├── apps/
-│   ├── web/        Vite + React + TS + Konva (workview canvas)
-│   ├── api/        FastAPI + SQLModel + Postgres (REST + auth)
-│   ├── ml/         FastAPI + SAM2 (predict, train, evaluate)
-│   └── worker/     Arq jobs (embedding pre-compute, training)
+│ ├── web/ Vite + React + TS + Konva (workview canvas)
+│ ├── api/ FastAPI + SQLModel + Postgres (REST + auth)
+│ ├── ml/ FastAPI + SAM2 (predict, train, evaluate)
+│ └── worker/ Arq jobs (embedding pre-compute, training)
 ├── packages/
-│   └── storage/    Pluggable storage (Local / S3 / MinIO / Azure / GCS)
-├── docs/           Architecture, features, fine-tune deep-dive, API ref, FAQ
-├── scripts/        E2E smoke tests (one per major feature)
-└── .github/        Copilot CLI onboarding + CI workflows + issue templates
+│ └── storage/ Pluggable storage (Local / S3 / MinIO / Azure / GCS)
+├── docs/ Architecture, features, fine-tune deep-dive, API ref, FAQ
+├── scripts/ E2E smoke tests (one per major feature)
+└── .github/ Copilot CLI onboarding + CI workflows + issue templates
 ```
 
 ## Documentation

@@ -4,7 +4,7 @@ This is Anvil's product wedge. V7 Darwin gives you base SAM2 auto-annotate. Anvi
 
 ## TL;DR
 
-|  | Meta's `training/train.py` | **Anvil** |
+| | Meta's `training/train.py` | **Anvil** |
 | --- | --- | --- |
 | Strategy | full fine-tune | **LoRA** on mask decoder only |
 | Trainable params | 100M+ | **~47K** (rank 8) |
@@ -22,7 +22,7 @@ This is Anvil's product wedge. V7 Darwin gives you base SAM2 auto-annotate. Anvi
 SAM2's image encoder (Hiera-B+, ~80M params, ViT) is the expensive part. We precompute it **once** at image upload time:
 
 ```
-upload  ─►  worker  ─►  predictor.set_image(img)  ─►  embeddings/<id>.npz
+upload ─► worker ─► predictor.set_image(img) ─► embeddings/<id>.npz
 ```
 
 At training time, we just `_restore_features(predictor, npz_path)`. **The encoder never runs in the training loop.** No encoder forward, no encoder backward, no encoder gradients in memory.
@@ -34,7 +34,7 @@ At training time, we just `_restore_features(predictor, npz_path)`. **The encode
 ```python
 # Walk model.sam_mask_decoder.* and find every nn.Linear inside attention modules.
 # Wrap each with LoRALinear(W_orig, rank=r, alpha=α):
-#     y = x @ W_orig + (x @ A @ B) * (α / r)
+# y = x @ W_orig + (x @ A @ B) * (α / r)
 # Only A (r×d) and B (d×r) are trainable. W_orig is frozen.
 ```
 

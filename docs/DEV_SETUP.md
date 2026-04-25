@@ -25,7 +25,7 @@ createdb anvil
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -U pip uv
-uv sync                      # installs api, ml, worker, storage deps
+uv sync # installs api, ml, worker, storage deps
 
 # 4. Web deps
 cd apps/web && npm install && cd ../..
@@ -33,13 +33,13 @@ cd apps/web && npm install && cd ../..
 # 5. SAM2 checkpoint
 mkdir -p checkpoints
 curl -L -o checkpoints/sam2.1_hiera_base_plus.pt \
-  https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt
+ https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt
 
 # 6. Env
 cp .env.example .env
 # Edit .env: set DATABASE_URL=postgresql+psycopg://<you>@localhost:5432/anvil
-#            set SAM2_CHECKPOINT=./checkpoints/sam2.1_hiera_base_plus.pt
-#            set SAM2_MODEL_CFG=configs/sam2.1/sam2.1_hiera_b+.yaml
+# set SAM2_CHECKPOINT=./checkpoints/sam2.1_hiera_base_plus.pt
+# set SAM2_MODEL_CFG=configs/sam2.1/sam2.1_hiera_b+.yaml
 
 # 7. Migrate (auto on api boot)
 ```
@@ -56,7 +56,7 @@ mkdir -p logs
 lsof -ti:8000 -ti:8001 -ti:5173 | xargs kill 2>/dev/null
 
 # ML first (slow boot ~3s)
-(cd apps/ml  && PYTHONPATH=$PWD nohup python -m uvicorn anvil_ml.main:app  --host 127.0.0.1 --port 8001 </dev/null > ~/PersonalDev/anvil-cv/logs/ml.log  2>&1 & disown)
+(cd apps/ml && PYTHONPATH=$PWD nohup python -m uvicorn anvil_ml.main:app --host 127.0.0.1 --port 8001 </dev/null > ~/PersonalDev/anvil-cv/logs/ml.log 2>&1 & disown)
 
 # API
 (cd apps/api && PYTHONPATH=$PWD nohup python -m uvicorn anvil_api.main:app --host 127.0.0.1 --port 8000 </dev/null > ~/PersonalDev/anvil-cv/logs/api.log 2>&1 & disown)
@@ -83,7 +83,7 @@ Without the worker, embedding pre-compute is skipped → click-to-segment will f
 ```bash
 # Python
 ruff check .
-mypy apps/api/anvil_api apps/ml/anvil_ml || true   # mypy is lenient
+mypy apps/api/anvil_api apps/ml/anvil_ml || true # mypy is lenient
 
 # Web
 cd apps/web && npm run typecheck && npm run lint

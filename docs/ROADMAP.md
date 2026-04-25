@@ -2,13 +2,13 @@
 
 Live status. Done = shipped to `main`. Order within a phase is suggested, not mandatory.
 
-## Phase 0 — Foundations  ✅
+## Phase 0 — Foundations
 - [x] Repo scaffold (monorepo: web, api, ml, worker, storage)
 - [x] Domain model + Postgres + SQLModel
 - [x] CI (ruff, mypy, web typecheck)
 - [ ] **`docker-compose-dev`** — one-command install (Postgres + Redis + MinIO + 3 services + web)
 
-## Phase 1 — Core annotation loop  ✅
+## Phase 1 — Core annotation loop
 - [x] JWT auth (signup / login)
 - [x] Project / Dataset CRUD
 - [x] Image upload + thumbnails + **embedding pre-compute on the worker**
@@ -25,7 +25,7 @@ Live status. Done = shipped to `main`. Order within a phase is suggested, not ma
 - [x] COCO instance-seg import (drag-drop ZIP → bootstrap dataset)
 - [ ] **`annotation-canvas`** — small a11y / focus-ring / timer polish
 
-## Phase 2 — The wedge  ✅
+## Phase 2 — The wedge
 - [x] LoRA fine-tune of SAM2 mask decoder (runs on M1 CPU)
 - [x] Model versions list with per-epoch metrics
 - [x] **Per-class IoU** bars + val-IoU sparkline
@@ -34,14 +34,14 @@ Live status. Done = shipped to `main`. Order within a phase is suggested, not ma
 - [x] Promote-to-active (auto-annotate uses the active version)
 - [x] Active-learning **Next uncertain** queue (entropy-ranked)
 
-## Phase 3 — Team & quality  partial
+## Phase 3 — Team & quality partial
 - [x] Review flow: Approve / Reject / Needs-changes
 - [x] Predefined reject reasons
 - [x] **Spatial pin comments** anchored to canvas coords
 - [ ] **`quality-dashboard`** — per-annotator throughput + IoU agreement matrix
 - [ ] Members + roles (org-level RBAC)
 
-## Phase 4 — Polish & launch  open
+## Phase 4 — Polish & launch open
 - [ ] **`finalize-name-domain`** — secure final name + domain (anvil.cv?)
 - [ ] **`docs-site`** — Astro Starlight built from `docs/`
 - [ ] **`public-demo`** — Hetzner + Replicate-hosted demo project
