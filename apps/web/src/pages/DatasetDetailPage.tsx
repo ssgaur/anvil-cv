@@ -98,7 +98,7 @@ export function DatasetDetailPage() {
               key={f}
               onClick={() => setFilter(f)}
               className={`px-3 py-1 text-xs rounded ${
-                filter === f ? "bg-neutral-700 text-white" : "bg-neutral-900 text-neutral-400 hover:text-neutral-200"
+                filter === f ? "bg-neutral-700 text-neutral-100" : "bg-neutral-900 text-neutral-400 hover:text-neutral-200"
               }`}
             >
               {f} <span className="ml-1 text-neutral-500">{counts[f as keyof typeof counts] ?? counts.all}</span>

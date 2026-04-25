@@ -40,7 +40,7 @@ export function LoginPage() {
             <button
               type="button"
               key={m}
-              className={`flex-1 py-1 rounded ${mode === m ? "bg-neutral-700 text-white" : "text-neutral-400"}`}
+              className={`flex-1 py-1 rounded ${mode === m ? "bg-neutral-700 text-neutral-100" : "text-neutral-400"}`}
               onClick={() => setMode(m)}
             >
               {m === "login" ? "Sign in" : "Create account"}

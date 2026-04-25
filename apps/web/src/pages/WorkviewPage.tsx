@@ -288,7 +288,7 @@ export function WorkviewPage() {
     <div className="h-screen flex flex-col bg-neutral-950 text-neutral-100">
       {/* Top bar */}
       <div className="h-12 border-b border-neutral-800 flex items-center px-4 gap-4 text-sm bg-neutral-900">
-        <Link to={`/projects/${projectId}/datasets/${datasetId}`} className="text-neutral-400 hover:text-white">
+        <Link to={`/projects/${projectId}/datasets/${datasetId}`} className="text-neutral-400 hover:text-neutral-100">
           ← Back to dataset
         </Link>
         <div className="text-neutral-500">|</div>
@@ -444,7 +444,7 @@ export function WorkviewPage() {
               <button onClick={commitPending} className="bg-emerald-500 text-neutral-950 px-3 py-1 rounded font-medium hover:bg-emerald-400">
                 Save (Enter)
               </button>
-              <button onClick={() => setPending(null)} className="text-neutral-400 px-2 hover:text-white">
+              <button onClick={() => setPending(null)} className="text-neutral-400 px-2 hover:text-neutral-100">
                 Discard (Esc)
               </button>
             </div>
@@ -459,7 +459,7 @@ export function WorkviewPage() {
           <div className="absolute bottom-0 left-0 right-0 h-16 bg-neutral-900/90 border-t border-neutral-800 flex items-center gap-2 px-3 overflow-x-auto">
             <button
               onClick={() => gotoSibling(-1)}
-              className="text-neutral-400 hover:text-white text-lg px-2"
+              className="text-neutral-400 hover:text-neutral-100 text-lg px-2"
               title="Previous (←)"
             >‹</button>
             {siblings.slice(Math.max(0, idx - 8), idx + 12).map((s) => (
@@ -479,7 +479,7 @@ export function WorkviewPage() {
             ))}
             <button
               onClick={() => gotoSibling(1)}
-              className="text-neutral-400 hover:text-white text-lg px-2"
+              className="text-neutral-400 hover:text-neutral-100 text-lg px-2"
               title="Next (→)"
             >›</button>
           </div>
@@ -500,7 +500,7 @@ export function WorkviewPage() {
                     key={c.id}
                     onClick={() => setActiveClassId(c.id)}
                     className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left ${
-                      activeClassId === c.id ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-800/50"
+                      activeClassId === c.id ? "bg-neutral-800 text-neutral-100" : "text-neutral-400 hover:bg-neutral-800/50"
                     }`}
                   >
                     <span className="w-3 h-3 rounded" style={{ background: c.color }} />
@@ -565,7 +565,7 @@ function ToolBtn({ active, onClick, label, icon }: { active: boolean; onClick: (
       onClick={onClick}
       title={label}
       className={`w-10 h-10 rounded grid place-items-center text-lg transition ${
-        active ? "bg-emerald-500 text-neutral-950" : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+        active ? "bg-emerald-500 text-neutral-950" : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
       }`}
     >
       {icon}

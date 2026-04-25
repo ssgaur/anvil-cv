@@ -47,7 +47,7 @@ function SideLink({ to, label, icon, disabled }: { to: string; label: string; ic
       to={to}
       className={({ isActive }) =>
         `flex items-center gap-3 px-3 py-2 rounded text-neutral-300 hover:bg-neutral-800 ${
-          isActive ? "bg-neutral-800 text-white" : ""
+          isActive ? "bg-neutral-800 text-neutral-100" : ""
         }`
       }
     >

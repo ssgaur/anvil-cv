@@ -45,7 +45,7 @@ export function ProjectDetailPage() {
               onClick={() => setTab(t)}
               className={`px-4 py-2 text-sm border-b-2 -mb-px ${
                 tab === t
-                  ? "border-emerald-500 text-white"
+                  ? "border-emerald-500 text-neutral-100"
                   : "border-transparent text-neutral-400 hover:text-neutral-200"
               }`}
             >
