@@ -1,24 +1,29 @@
+# One-command dev stack for Anvil.
+#   make up         -> start everything (auto-downloads SAM2 weights on first run)
+#   docker compose up
+#
+# Open http://localhost:5173 once "anvil-web" logs say "Local: ...".
+
 services:
+
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-anvil}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-anvil}
       POSTGRES_DB: ${POSTGRES_DB:-anvil}
-    ports:
-      - "5432:5432"
+    ports: ["5432:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-anvil}"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    ports: ["6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -40,50 +45,108 @@ services:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  # First-run only: create the storage bucket inside MinIO. Idempotent.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-anvil} ${MINIO_ROOT_PASSWORD:-anvilanvil} &&
+      mc mb -p local/${STORAGE_BUCKET:-anvil} || true &&
+      mc anonymous set download local/${STORAGE_BUCKET:-anvil} || true &&
+      echo 'minio bucket ready'
+      "
+    restart: "no"
+
+  # First-run only: download SAM2 base+ weights (~700 MB) into a named volume,
+  # so it survives container rebuilds. Skips if the file already exists.
+  init-checkpoint:
+    image: curlimages/curl:8.10.1
+    volumes:
+      - checkpoints:/checkpoints
+    entrypoint: >
+      /bin/sh -c "
+      if [ -f /checkpoints/sam2.1_hiera_base_plus.pt ]; then
+        echo 'sam2 checkpoint already present, skipping';
+      else
+        echo 'downloading sam2.1_hiera_base_plus.pt (~700 MB)...';
+        curl -L --fail -o /checkpoints/sam2.1_hiera_base_plus.pt \
+          https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt;
+      fi
+      "
+    restart: "no"
 
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
     env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-anvil}:${POSTGRES_PASSWORD:-anvil}@postgres:5432/${POSTGRES_DB:-anvil}
+      REDIS_URL: redis://redis:6379/0
+      ML_SERVICE_URL: http://ml:8001
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-minio}
+      MINIO_ENDPOINT: http://minio:9000
+      CORS_ORIGINS: http://localhost:5173
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./apps/api:/app/apps/api
-      - ./packages/storage:/app/packages/storage
-    command: uvicorn anvil_api.main:app --host 0.0.0.0 --port 8000 --reload
+      minio-init:
+        condition: service_completed_successfully
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    command: uvicorn anvil_api.main:app --host 0.0.0.0 --port 8000
 
   ml:
     build:
       context: .
       dockerfile: apps/ml/Dockerfile
     env_file: .env
-    ports:
-      - "8001:8001"
+    environment:
+      SAM2_CHECKPOINT: /checkpoints/sam2.1_hiera_base_plus.pt
+      SAM2_MODEL_CFG: configs/sam2.1/sam2.1_hiera_b+.yaml
+      ML_DEVICE: ${ML_DEVICE:-cpu}
+    depends_on:
+      init-checkpoint:
+        condition: service_completed_successfully
+    ports: ["8001:8001"]
     volumes:
-      - ./apps/ml:/app/apps/ml
-      - ./checkpoints:/checkpoints
-    command: uvicorn anvil_ml.main:app --host 0.0.0.0 --port 8001 --reload
+      - checkpoints:/checkpoints:ro
+      - adapters:/adapters
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    command: uvicorn anvil_ml.main:app --host 0.0.0.0 --port 8001
 
   worker:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
     env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-anvil}:${POSTGRES_PASSWORD:-anvil}@postgres:5432/${POSTGRES_DB:-anvil}
+      REDIS_URL: redis://redis:6379/0
+      ML_SERVICE_URL: http://ml:8001
+      MINIO_ENDPOINT: http://minio:9000
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    volumes:
-      - ./apps/worker:/app/apps/worker
-      - ./packages/storage:/app/packages/storage
+      minio-init:
+        condition: service_completed_successfully
     command: arq anvil_worker.main.WorkerSettings
 
   web:
@@ -92,13 +155,14 @@ services:
       dockerfile: Dockerfile
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./apps/web:/app
-      - /app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ["5173:5173"]
     command: pnpm dev --host 0.0.0.0
 
 volumes:
   postgres_data:
   minio_data:
+  checkpoints:
+  adapters:

@@ -1,6 +1,13 @@
 # Local Dev Setup
 
-This is the **3-process recipe** the maintainer uses on M1 macOS. It's the fastest path to a working dev environment until `docker-compose-dev` ships.
+Two ways to run Anvil locally:
+
+- **Docker (one command, recommended for users / kicking the tires):** `make up` from the repo root. See the README quick-start section. Everything runs in containers; no Python or Node install needed on your host.
+- **3-process bare-metal (recommended for hacking on Anvil itself):** the rest of this doc. Faster iteration, no Docker overhead, native MPS for ML.
+
+## Bare-metal 3-process setup
+
+This is the **3-process recipe** the maintainer uses on M1 macOS.
 
 ## Prereqs
 

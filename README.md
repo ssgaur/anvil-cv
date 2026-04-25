@@ -36,19 +36,40 @@ Runs on a **single M1 16 GB laptop** for development — no GPU cluster required
 
 See [docs/FEATURES.md](docs/FEATURES.md) for the full list with screenshots and shortcuts.
 
-## Quick start
+## Quick start (one command)
 
-**Option A — local dev on macOS (recommended for hacking):** see [docs/DEV_SETUP.md](docs/DEV_SETUP.md). Three processes (`api`, `ml`, `web`), Postgres via Homebrew, ~5 minutes from clone to running.
-
-**Option B — Docker compose** *(work in progress; tracked in `docker-compose-dev` todo)*
+You need **Docker** (Desktop on macOS/Windows, or Engine on Linux). That's it. No Python, no Node, no Postgres install.
 
 ```bash
 git clone https://github.com/ssgaur/anvil-cv.git
-cd anvil-cv && cp .env.example .env
-docker compose up
+cd anvil-cv
+make up
 ```
 
 Then open <http://localhost:5173>.
+
+First run takes 5–10 minutes — Docker pulls images, builds the services, and downloads the SAM2 base checkpoint (~700 MB) into a Docker volume. Subsequent `make up` runs start in seconds.
+
+Other useful targets:
+
+```bash
+make logs        # tail all service logs
+make ps          # see container status
+make down        # stop everything (data preserved)
+make clean       # stop and wipe all volumes (DB, MinIO, checkpoints)
+make rebuild     # force rebuild after Dockerfile changes
+```
+
+Ports:
+
+| URL                    | What                |
+| ---------------------- | ------------------- |
+| http://localhost:5173  | Anvil web UI        |
+| http://localhost:8000  | REST API + `/docs`  |
+| http://localhost:8001  | ML service          |
+| http://localhost:9001  | MinIO admin console |
+
+Hacking on the code? Use the local 3-process recipe instead — see [docs/DEV_SETUP.md](docs/DEV_SETUP.md).
 
 ## Repo layout
 

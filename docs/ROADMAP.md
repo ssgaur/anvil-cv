@@ -6,7 +6,7 @@ Live status. Done = shipped to `main`. Order within a phase is suggested, not ma
 - [x] Repo scaffold (monorepo: web, api, ml, worker, storage)
 - [x] Domain model + Postgres + SQLModel
 - [x] CI (ruff, mypy, web typecheck)
-- [ ] **`docker-compose-dev`** — one-command install (Postgres + Redis + MinIO + 3 services + web)
+- [x] **`docker-compose-dev`** — one-command install via `make up` (Postgres + Redis + MinIO + 3 services + web + checkpoint auto-download)
 
 ## Phase 1 — Core annotation loop
 - [x] JWT auth (signup / login)
