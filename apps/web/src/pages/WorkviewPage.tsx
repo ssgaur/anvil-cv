@@ -253,6 +253,8 @@ export function WorkviewPage() {
   // Hold-space-to-pan (overrides any active tool while held)
   const [spacePan, setSpacePan] = useState(false);
   const isPanning = tool === "pan" || spacePan;
+  // Cheatsheet popover
+  const [showHelp, setShowHelp] = useState(false);
 
   // ---- Data load
   const loadAll = useCallback(async () => {
@@ -371,12 +373,15 @@ export function WorkviewPage() {
       }
       if (e.key === "f" || e.key === "F") { fitToScreen(); return; }
       if (e.key === "0") { zoomTo100(); return; }
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) { e.preventDefault(); setShowHelp((v) => !v); return; }
+      if (e.key === "h" || e.key === "H") { setShowHelp((v) => !v); return; }
       if (e.key === "v") setTool("pan");
       else if (e.key === "a") setTool("auto");
       else if (e.key === "p") setTool("polygon");
       else if (e.key === "b") setTool("bbox");
       else if (e.key === "r") setTool("brush");
       else if (e.key === "Escape") {
+        if (showHelp) { setShowHelp(false); return; }
         setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
         clearPrompts();
         setSelectedAnnId(null); setEditPoly(null);
@@ -404,7 +409,7 @@ export function WorkviewPage() {
       window.removeEventListener("blur", blur);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes]);
+  }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp]);
 
   // Helpers
   function imagePoint(stageX: number, stageY: number): [number, number] {
@@ -1044,7 +1049,15 @@ export function WorkviewPage() {
             <span className="text-neutral-400 px-2 tabular-nums w-14 text-right">
               {Math.round(view.scale * 100)}%
             </span>
+            <button
+              onClick={() => setShowHelp((v) => !v)}
+              title="Keyboard shortcuts & tips (? or H)"
+              className={`px-2 py-1 rounded text-neutral-200 ${showHelp ? "bg-emerald-500 text-neutral-950" : "hover:bg-neutral-800"}`}
+            >
+              ? Help
+            </button>
           </div>
+          {showHelp && <Cheatsheet onClose={() => setShowHelp(false)} />}
           {spacePan && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs px-3 py-1 rounded-full shadow z-10">
               ✋ Pan (release Space to resume)
@@ -1194,5 +1207,128 @@ function ModelPicker({
         </option>
       ))}
     </select>
+  );
+}
+
+const SHORTCUT_GROUPS: { title: string; rows: [string, string][] }[] = [
+  {
+    title: "Tools",
+    rows: [
+      ["V", "Pan"],
+      ["A", "Auto-annotate (SAM2)"],
+      ["P", "Polygon"],
+      ["B", "Bounding box"],
+      ["R", "Brush"],
+    ],
+  },
+  {
+    title: "Canvas",
+    rows: [
+      ["Hold Space", "Temporary pan (any tool)"],
+      ["Scroll", "Zoom in / out at cursor"],
+      ["F", "Fit image to screen"],
+      ["0", "Reset to 100%"],
+      ["← / →", "Previous / next image"],
+    ],
+  },
+  {
+    title: "Auto-annotate (A)",
+    rows: [
+      ["Click", "One-point prompt → SAM2 mask"],
+      ["Shift-click", "Add positive point"],
+      ["Alt-click", "Add negative (subtract) point"],
+      ["Drag", "Box prompt (replaces points)"],
+      ["Enter", "Save predicted polygon"],
+      ["Esc", "Discard prompts / preview"],
+    ],
+  },
+  {
+    title: "Polygon (P)",
+    rows: [
+      ["Click", "Add vertex"],
+      ["Enter", "Close & save (≥ 3 pts)"],
+      ["Click annotation", "Edit vertices"],
+      ["Drag handle", "Move vertex"],
+      ["Click white midpoint", "Insert vertex"],
+      ["Shift/Alt-click handle", "Delete vertex (min 3)"],
+    ],
+  },
+  {
+    title: "Brush (R)",
+    rows: [
+      ["Drag", "Paint mask"],
+      ["Shift-drag", "Erase"],
+      ["[ / ]", "Smaller / larger brush"],
+      ["Enter", "Commit → polygon"],
+      ["Esc", "Clear brush"],
+    ],
+  },
+  {
+    title: "Selection & history",
+    rows: [
+      ["Hover + Del/Backspace", "Delete annotation"],
+      ["⌘/Ctrl-Z", "Undo (last 20)"],
+      ["⌘/Ctrl-Shift-Z", "Redo"],
+      ["⌘/Ctrl-Y", "Redo (alt)"],
+    ],
+  },
+  {
+    title: "Top bar",
+    rows: [
+      ["Next uncertain ✨", "Jump to least-sure unannotated image"],
+      ["Model picker", "Predict with base SAM2 or fine-tuned LoRA"],
+    ],
+  },
+];
+
+function Cheatsheet({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="absolute inset-0 z-20 grid place-items-center bg-neutral-950/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl max-w-3xl w-[90vw] max-h-[80vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-4 border-b border-neutral-800 sticky top-0 bg-neutral-900">
+          <div className="text-base font-semibold text-neutral-100">Anvil shortcuts &amp; tips</div>
+          <button
+            onClick={onClose}
+            className="text-neutral-400 hover:text-neutral-100 text-lg"
+            title="Close (Esc / ?)"
+          >
+            ×
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 p-5 text-xs">
+          {SHORTCUT_GROUPS.map((g) => (
+            <div key={g.title}>
+              <div className="text-emerald-400 font-semibold uppercase tracking-wide text-[11px] mb-2">
+                {g.title}
+              </div>
+              <table className="w-full">
+                <tbody>
+                  {g.rows.map(([key, desc]) => (
+                    <tr key={key} className="align-top">
+                      <td className="py-1 pr-3 whitespace-nowrap">
+                        <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-200 font-mono text-[11px]">
+                          {key}
+                        </kbd>
+                      </td>
+                      <td className="py-1 text-neutral-300">{desc}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+        <div className="px-5 pb-4 text-[11px] text-neutral-500">
+          Press <kbd className="px-1 rounded bg-neutral-800 border border-neutral-700">?</kbd> or{" "}
+          <kbd className="px-1 rounded bg-neutral-800 border border-neutral-700">H</kbd> to toggle this panel.
+        </div>
+      </div>
+    </div>
   );
 }
