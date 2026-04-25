@@ -43,6 +43,92 @@ export function WorkviewPage() {
   // Polygon vertex edit
   const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null);
   const [editPoly, setEditPoly] = useState<[number, number][] | null>(null);
+  // Snapshot of the annotation taken when entering edit mode (for undo of polygon edits)
+  const editBeforeRef = useRef<Annotation | null>(null);
+
+  // ---- Undo/redo (per-image, capped at 20)
+  type HistOp =
+    | { kind: "create"; ann: Annotation }
+    | { kind: "delete"; ann: Annotation }
+    | { kind: "update"; before: Annotation; after: Annotation };
+  const [undoStack, setUndoStack] = useState<HistOp[]>([]);
+  const [redoStack, setRedoStack] = useState<HistOp[]>([]);
+  const HIST_LIMIT = 20;
+  function pushOp(op: HistOp) {
+    setUndoStack((s) => [...s, op].slice(-HIST_LIMIT));
+    setRedoStack([]);
+  }
+  // Replace every reference to oldId with newAnn (after delete-undo re-creates with a new id)
+  function remapId(stack: HistOp[], oldId: string, newAnn: Annotation): HistOp[] {
+    return stack.map((op) => {
+      if (op.kind === "create" && op.ann.id === oldId) return { kind: "create", ann: newAnn };
+      if (op.kind === "delete" && op.ann.id === oldId) return { kind: "delete", ann: newAnn };
+      if (op.kind === "update" && op.before.id === oldId) {
+        return { kind: "update", before: { ...op.before, id: newAnn.id }, after: { ...op.after, id: newAnn.id } };
+      }
+      return op;
+    });
+  }
+  async function applyInverse(op: HistOp): Promise<HistOp> {
+    // Returns the redo-op (forward equivalent).
+    if (op.kind === "create") {
+      // Undo a create => delete.
+      await api.deleteAnnotation(op.ann.id);
+      setAnnotations((arr) => arr.filter((a) => a.id !== op.ann.id));
+      if (selectedAnnId === op.ann.id) { setSelectedAnnId(null); setEditPoly(null); }
+      return { kind: "delete", ann: op.ann };
+    }
+    if (op.kind === "delete") {
+      // Undo a delete => re-create (new id).
+      const re = await api.createAnnotation(imageId, {
+        class_id: op.ann.class_id,
+        geometry_type: op.ann.geometry_type,
+        geometry: op.ann.geometry,
+        source: op.ann.source ?? "manual",
+        confidence: op.ann.confidence ?? null,
+      });
+      setAnnotations((arr) => [...arr, re]);
+      const oldId = op.ann.id;
+      setUndoStack((s) => remapId(s, oldId, re));
+      setRedoStack((s) => remapId(s, oldId, re));
+      return { kind: "create", ann: re };
+    }
+    // update — patch back to before
+    const reverted = await api.updateAnnotation(op.before.id, {
+      class_id: op.before.class_id,
+      geometry_type: op.before.geometry_type,
+      geometry: op.before.geometry,
+    });
+    setAnnotations((arr) => arr.map((x) => (x.id === reverted.id ? reverted : x)));
+    if (selectedAnnId === reverted.id && reverted.geometry_type === "polygon" && reverted.geometry.points) {
+      setEditPoly(reverted.geometry.points.map((p: number[]) => [p[0], p[1]] as [number, number]));
+    }
+    return { kind: "update", before: op.after, after: op.before };
+  }
+  async function undo() {
+    if (undoStack.length === 0) return;
+    const op = undoStack[undoStack.length - 1];
+    setUndoStack((s) => s.slice(0, -1));
+    try {
+      const forward = await applyInverse(op);
+      setRedoStack((s) => [...s, forward].slice(-HIST_LIMIT));
+    } catch (e) {
+      setError(e instanceof Error ? `Undo failed: ${e.message}` : "Undo failed");
+      setUndoStack((s) => [...s, op]); // restore
+    }
+  }
+  async function redo() {
+    if (redoStack.length === 0) return;
+    const op = redoStack[redoStack.length - 1];
+    setRedoStack((s) => s.slice(0, -1));
+    try {
+      const back = await applyInverse(op);
+      setUndoStack((s) => [...s, back].slice(-HIST_LIMIT));
+    } catch (e) {
+      setError(e instanceof Error ? `Redo failed: ${e.message}` : "Redo failed");
+      setRedoStack((s) => [...s, op]);
+    }
+  }
 
   // Model version selection (null = base SAM2; "active" = use project default)
   const [models, setModels] = useState<ModelVersion[]>([]);
@@ -103,6 +189,8 @@ export function WorkviewPage() {
   // Reset selection / prompts when switching images
   useEffect(() => {
     setSelectedAnnId(null); setEditPoly(null);
+    editBeforeRef.current = null;
+    setUndoStack([]); setRedoStack([]);
     clearPrompts();
     setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,6 +257,13 @@ export function WorkviewPage() {
   useEffect(() => {
     function k(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      if (mod && (e.key === "y" || e.key === "Y")) { e.preventDefault(); redo(); return; }
       if (e.key === "v") setTool("pan");
       else if (e.key === "a") setTool("auto");
       else if (e.key === "p") setTool("polygon");
@@ -187,7 +282,7 @@ export function WorkviewPage() {
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, polyPoints, hoverAnnId, siblings, imageId]);
+  }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack]);
 
   // Helpers
   function imagePoint(stageX: number, stageY: number): [number, number] {
@@ -341,6 +436,7 @@ export function WorkviewPage() {
           source: "manual",
         });
         setAnnotations((arr) => [...arr, a]);
+        pushOp({ kind: "create", ann: a });
       } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
       return;
     }
@@ -367,6 +463,7 @@ export function WorkviewPage() {
         source: "manual",
       });
       setAnnotations((arr) => [...arr, a]);
+      pushOp({ kind: "create", ann: a });
       setPolyPoints([]);
     } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
   }
@@ -382,32 +479,43 @@ export function WorkviewPage() {
         confidence: pending.score,
       });
       setAnnotations((arr) => [...arr, a]);
+      pushOp({ kind: "create", ann: a });
       clearPrompts();
     } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
   }
 
   async function deleteAnnotation(id: string) {
+    const target = annotations.find((a) => a.id === id);
     await api.deleteAnnotation(id);
     setAnnotations((arr) => arr.filter((a) => a.id !== id));
     if (selectedAnnId === id) { setSelectedAnnId(null); setEditPoly(null); }
+    if (target) pushOp({ kind: "delete", ann: target });
   }
 
   // ---- Polygon vertex editing ----
   function selectAnnotation(a: Annotation) {
     if (a.geometry_type !== "polygon" || !a.geometry.points) {
-      setSelectedAnnId(a.id); setEditPoly(null); return;
+      setSelectedAnnId(a.id); setEditPoly(null); editBeforeRef.current = null; return;
     }
     setSelectedAnnId(a.id);
     setEditPoly(a.geometry.points.map((p: number[]) => [p[0], p[1]] as [number, number]));
+    editBeforeRef.current = a;
   }
 
   async function flushEditPoly() {
     if (!selectedAnnId || !editPoly) return;
+    const before = editBeforeRef.current;
     try {
       const updated = await api.updateAnnotation(selectedAnnId, {
         geometry: { points: editPoly },
       });
       setAnnotations((arr) => arr.map((x) => (x.id === selectedAnnId ? updated : x)));
+      if (before && before.id === updated.id) {
+        // Skip no-op (geometry unchanged)
+        const samePts = JSON.stringify(before.geometry?.points) === JSON.stringify(updated.geometry?.points);
+        if (!samePts) pushOp({ kind: "update", before, after: updated });
+      }
+      editBeforeRef.current = updated;
     } catch (err) {
       setError(err instanceof Error ? err.message : "update failed");
     }
@@ -468,6 +576,24 @@ export function WorkviewPage() {
           )}
         </div>
         <div className="text-xs text-neutral-400">⏱ {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={undo}
+            disabled={undoStack.length === 0}
+            title={`Undo (⌘Z) — ${undoStack.length} step${undoStack.length === 1 ? "" : "s"} available`}
+            className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:hover:bg-neutral-800"
+          >
+            ↶ Undo
+          </button>
+          <button
+            onClick={redo}
+            disabled={redoStack.length === 0}
+            title={`Redo (⌘⇧Z) — ${redoStack.length} step${redoStack.length === 1 ? "" : "s"} available`}
+            className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:hover:bg-neutral-800"
+          >
+            ↷ Redo
+          </button>
+        </div>
         <ModelPicker
           models={models}
           activeModelId={activeModelId}
