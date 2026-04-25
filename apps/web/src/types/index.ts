@@ -36,6 +36,24 @@ export interface ModelVersion {
   metrics: Record<string, unknown>;
   created_at: string;
   completed_at: string | null;
+  is_active: boolean;
+}
+
+export interface CompareSide {
+  id: string | null;
+  name: string;
+  mean_iou: number;
+  per_class_iou: Record<string, number>;
+}
+
+export interface CompareResult {
+  a: CompareSide;
+  b: CompareSide;
+  delta_mean_iou: number;
+  per_class: { class_name: string; a_iou: number | null; b_iou: number | null; delta: number | null }[];
+  per_item: { image_path: string; class_name: string; a_iou: number | null; b_iou: number | null }[];
+  n_samples_requested: number;
+  n_annotations_evaluated: number;
 }
 
 export interface Dataset {

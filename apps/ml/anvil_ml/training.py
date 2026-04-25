@@ -253,9 +253,12 @@ def train_lora(
 
         avg_loss = epoch_loss / max(1, n)
         # 4. Eval
-        val_iou = _evaluate(model, predictor, transforms, eval_set, device) if eval_set else 0.0
+        ev = _evaluate(model, predictor, transforms, eval_set, device) if eval_set else {"mean_iou": 0.0, "per_class_iou": {}, "per_item": []}
+        val_iou = ev["mean_iou"]
         metrics["train_loss_per_epoch"].append(round(avg_loss, 6))
         metrics["val_iou_per_epoch"].append(round(val_iou, 4))
+        metrics["val_iou_per_class"] = ev["per_class_iou"]  # last epoch wins
+        metrics["last_eval_per_item"] = ev["per_item"]
         progress = (epoch + 1) / cfg.epochs
         print(f"[train] epoch {epoch + 1}/{cfg.epochs}  loss={avg_loss:.4f}  val_iou={val_iou:.4f}")
         if on_progress:
@@ -284,11 +287,19 @@ def train_lora(
 
 
 @torch.no_grad()
-def _evaluate(model, predictor, transforms, eval_set, device) -> float:
+def _evaluate(model, predictor, transforms, eval_set, device) -> dict[str, Any]:
+    """Returns {mean_iou, per_class_iou: {name: iou}, per_item: [...]}.
+
+    eval_set items are tuples (TrainItem, ann_dict, gt_mask).  ann_dict may carry
+    optional `class_id` / `class_name` keys; missing class info is bucketed as
+    `_unlabeled`.
+    """
+    out = {"mean_iou": 0.0, "per_class_iou": {}, "per_item": []}
     if not eval_set:
-        return 0.0
+        return out
     model.eval()
     ious: list[float] = []
+    by_class: dict[str, list[float]] = {}
     for it, ann, gt_mask in eval_set:
         try:
             _restore_features(predictor, it.embedding_path)
@@ -301,20 +312,72 @@ def _evaluate(model, predictor, transforms, eval_set, device) -> float:
             if not pts:
                 continue
             sparse, dense = _forward_train(model, transforms, pts[0], orig_hw, device)
-            # multimask=True for eval: pick best mask by predicted IoU
             low_res, iou_pred = _decode_mask(model, feats, sparse, dense, multimask=True)
-            hires = transforms.postprocess_masks(low_res, orig_hw)  # (1,3,H,W) logits
+            hires = transforms.postprocess_masks(low_res, orig_hw)
             best = int(iou_pred[0].argmax().item())
             pred_bin = (hires[0, best] > 0).cpu().numpy().astype(np.uint8)
-            ious.append(mask_iou(pred_bin, gt_mask))
+            iou_val = mask_iou(pred_bin, gt_mask)
         except Exception as e:
             print(f"[eval] skip due to error: {e}")
             continue
-    return float(np.mean(ious)) if ious else 0.0
+        cname = str(ann.get("class_name") or ann.get("class_id") or "_unlabeled")
+        ious.append(iou_val)
+        by_class.setdefault(cname, []).append(iou_val)
+        out["per_item"].append({
+            "image_path": it.image_path,
+            "class_id": ann.get("class_id"),
+            "class_name": cname,
+            "iou": round(iou_val, 4),
+        })
+    out["mean_iou"] = float(np.mean(ious)) if ious else 0.0
+    out["per_class_iou"] = {k: round(float(np.mean(v)), 4) for k, v in by_class.items()}
+    return out
 
 
 # --------------- adapter cache for inference ---------------
 _adapter_predictors: dict[str, Any] = {}
+
+
+def evaluate_with_adapter(
+    items: list[TrainItem],
+    adapter_path: str | None,
+    device_str: str = "cpu",
+) -> dict[str, Any]:
+    """Run eval (no training) on the given items, optionally with a LoRA adapter
+    loaded onto the mask decoder. Returns same shape as `_evaluate`.
+
+    Used by the model-version A/B compare endpoint.
+    """
+    from sam2.build_sam import build_sam2
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+    from anvil_ml.lora import load_lora
+    import os
+    device = torch.device(device_str)
+    ckpt = os.getenv("SAM2_CHECKPOINT", "./checkpoints/sam2.1_hiera_base_plus.pt")
+    cfg_yaml = os.getenv("SAM2_MODEL_CFG", "configs/sam2.1/sam2.1_hiera_b+.yaml")
+    ckpt_abs = str(Path(ckpt).resolve())
+    model = build_sam2(cfg_yaml, ckpt_abs, device=str(device))
+    predictor = SAM2ImagePredictor(model)
+    transforms = predictor._transforms
+    if adapter_path:
+        # load_lora injects matching LoRA modules itself.
+        load_lora(model.sam_mask_decoder, adapter_path)
+
+    # Build eval flat list
+    flat: list[tuple[TrainItem, dict[str, Any], np.ndarray]] = []
+    for it in items:
+        for ann in it.annotations:
+            mask = rasterize_annotation(ann, ann["image_h"], ann["image_w"])
+            if mask is None or mask.sum() < 16:
+                continue
+            flat.append((it, ann, mask))
+    out = _evaluate(model, predictor, transforms, flat, device)
+    del model, predictor
+    if device.type == "mps":
+        torch.mps.empty_cache()
+    elif device.type == "cuda":
+        torch.cuda.empty_cache()
+    return out
 
 
 def get_adapter_predictor(adapter_path: str):

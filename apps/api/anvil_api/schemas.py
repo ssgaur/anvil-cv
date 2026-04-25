@@ -245,7 +245,16 @@ class ModelVersionOut(BaseModel):
     metrics: dict[str, Any]
     created_at: datetime
     completed_at: datetime | None
+    is_active: bool = False
 
 
 class SetActiveModelIn(BaseModel):
     model_version_id: UUID | None  # null to clear (use base model)
+
+
+class CompareIn(BaseModel):
+    a_id: UUID | None  # null = base SAM2
+    b_id: UUID | None  # null = base SAM2
+    dataset_id: UUID | None = None  # restrict eval pool to this dataset (else any in project)
+    n_samples: int = 12  # number of annotations to sample for the shared eval set
+    seed: int | None = None

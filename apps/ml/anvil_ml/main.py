@@ -103,6 +103,26 @@ async def train_endpoint(req: TrainRequest) -> dict[str, Any]:
         raise HTTPException(500, f"train failed: {e}") from e
 
 
+class EvalRequest(BaseModel):
+    items: list[TrainItemModel]
+    adapter_path: str | None = None  # null = base SAM2
+    device: str = "cpu"
+
+
+@app.post("/evaluate")
+async def evaluate_endpoint(req: EvalRequest) -> dict[str, Any]:
+    """Run eval-only (no training) on the given items, optionally with an adapter."""
+    from anvil_ml.training import TrainItem, evaluate_with_adapter
+
+    items = [TrainItem(**it.model_dump()) for it in req.items]
+    try:
+        return await asyncio.to_thread(evaluate_with_adapter, items, req.adapter_path, req.device)
+    except FileNotFoundError as e:
+        raise HTTPException(404, f"missing file: {e}") from e
+    except Exception as e:
+        raise HTTPException(500, f"evaluate failed: {e}") from e
+
+
 class ScoreRequest(BaseModel):
     image_path: str
     embedding_path: str | None = None

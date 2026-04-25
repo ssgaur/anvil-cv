@@ -1,5 +1,5 @@
 import type {
-  Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, Dataset, ImageRow, ModelVersion, PredictResponse, Project, ReviewStatus, User,
+  Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, CompareResult, Dataset, ImageRow, ModelVersion, PredictResponse, Project, ReviewStatus, User,
 } from "../types";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -250,6 +250,15 @@ export const api = {
   setActiveModel: (projectId: string, modelVersionId: string | null) =>
     req<ModelVersion | null>(`/api/projects/${projectId}/active-model`, {
       method: "POST", body: JSON.stringify({ model_version_id: modelVersionId }),
+    }),
+  deleteModelVersion: (id: string) =>
+    req<void>(`/api/model-versions/${id}`, { method: "DELETE" }),
+  compareModelVersions: (projectId: string, body: {
+    a_id: string | null; b_id: string | null;
+    dataset_id?: string | null; n_samples?: number; seed?: number | null;
+  }) =>
+    req<CompareResult>(`/api/projects/${projectId}/model-versions/compare`, {
+      method: "POST", body: JSON.stringify(body),
     }),
 
   // Active learning

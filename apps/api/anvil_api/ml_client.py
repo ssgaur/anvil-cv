@@ -84,6 +84,20 @@ class MLClient:
             r.raise_for_status()
             return r.json()
 
+    async def evaluate(
+        self,
+        items: list[dict[str, Any]],
+        adapter_path: str | None = None,
+        device: str = "cpu",
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(base_url=self.base, timeout=None) as c:
+            r = await c.post(
+                "/evaluate",
+                json={"items": items, "adapter_path": adapter_path, "device": device},
+            )
+            r.raise_for_status()
+            return r.json()
+
 
     async def score(
         self,
