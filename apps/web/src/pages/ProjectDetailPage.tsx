@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import type { ClassRow, Dataset, ModelVersion, Project } from "../types";
@@ -222,7 +222,7 @@ function ModelsTab({
 
   useEffect(() => { if (!datasetId && datasets[0]) setDatasetId(datasets[0].id); }, [datasets, datasetId]);
 
-  async function startTraining(e: React.FormEvent) {
+  async function startTraining(e: FormEvent) {
     e.preventDefault();
     setCreating(true); setErr(null);
     try {
@@ -353,7 +353,7 @@ function ModelsTab({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
       <span className="block text-neutral-500 mb-1">{label}</span>
