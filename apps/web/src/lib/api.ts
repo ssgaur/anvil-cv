@@ -139,6 +139,10 @@ export const api = {
     }),
   deleteAnnotation: (id: string) =>
     req<void>(`/api/annotations/${id}`, { method: "DELETE" }),
+  updateAnnotation: (id: string, patch: { geometry?: any; geometry_type?: string; class_id?: string }) =>
+    req<Annotation>(`/api/annotations/${id}`, {
+      method: "PATCH", body: JSON.stringify(patch),
+    }),
 
   // Predict
   predict: (imageId: string, body: {

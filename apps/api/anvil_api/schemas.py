@@ -109,6 +109,12 @@ class AnnotationIn(BaseModel):
     confidence: float | None = None
 
 
+class AnnotationPatch(BaseModel):
+    class_id: UUID | None = None
+    geometry_type: GeometryType | None = None
+    geometry: dict[str, Any] | None = None
+
+
 class AnnotationOut(BaseModel):
     id: UUID
     image_id: UUID

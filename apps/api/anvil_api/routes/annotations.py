@@ -5,7 +5,7 @@ from sqlmodel import select
 
 from anvil_api.auth import CurrentUser, SessionDep
 from anvil_api.models import Annotation, Class, Dataset, Image, Project
-from anvil_api.schemas import AnnotationIn, AnnotationOut
+from anvil_api.schemas import AnnotationIn, AnnotationOut, AnnotationPatch
 
 router = APIRouter(tags=["annotations"])
 
@@ -69,3 +69,26 @@ def delete_annotation(annotation_id: UUID, session: SessionDep, user: CurrentUse
     _ownership(session, a.image_id, user)
     session.delete(a)
     session.commit()
+
+
+@router.patch("/annotations/{annotation_id}", response_model=AnnotationOut)
+def update_annotation(
+    annotation_id: UUID, body: AnnotationPatch, session: SessionDep, user: CurrentUser,
+) -> AnnotationOut:
+    a = session.get(Annotation, annotation_id)
+    if not a:
+        raise HTTPException(404, "annotation not found")
+    _ownership(session, a.image_id, user)
+    if body.class_id is not None:
+        cls = session.get(Class, body.class_id)
+        if not cls:
+            raise HTTPException(400, "unknown class_id")
+        a.class_id = body.class_id
+    if body.geometry_type is not None:
+        a.geometry_type = body.geometry_type
+    if body.geometry is not None:
+        a.geometry = body.geometry
+    session.add(a)
+    session.commit()
+    session.refresh(a)
+    return _to_out(a)

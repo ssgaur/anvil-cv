@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
+import { Circle, Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
 import Konva from "konva";
 import { api, fileUrl } from "../lib/api";
 import type { Annotation, ClassRow, ImageRow, ModelVersion } from "../types";
@@ -30,6 +30,19 @@ export function WorkviewPage() {
   const [predicting, setPredicting] = useState(false);
   const [hoverAnnId, setHoverAnnId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Multi-prompt SAM2 state (shift=add+, alt=subtract-, drag=box)
+  const [prompts, setPrompts] = useState<{
+    points: [number, number, 0 | 1][]; // [x, y, label(1=fg, 0=bg)]
+    box: [number, number, number, number] | null; // [x, y, w, h] image px
+  }>({ points: [], box: null });
+  const dragStartRef = useRef<[number, number] | null>(null);
+  const wasDragRef = useRef(false);
+  const [autoBoxPreview, setAutoBoxPreview] = useState<[number, number, number, number] | null>(null);
+
+  // Polygon vertex edit
+  const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null);
+  const [editPoly, setEditPoly] = useState<[number, number][] | null>(null);
 
   // Model version selection (null = base SAM2; "active" = use project default)
   const [models, setModels] = useState<ModelVersion[]>([]);
@@ -86,6 +99,14 @@ export function WorkviewPage() {
   }, [imageId, projectId, activeClassId]);
 
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [imageId]);
+
+  // Reset selection / prompts when switching images
+  useEffect(() => {
+    setSelectedAnnId(null); setEditPoly(null);
+    clearPrompts();
+    setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageId]);
 
   // Sibling images (for nav strip)
   useEffect(() => {
@@ -152,7 +173,11 @@ export function WorkviewPage() {
       else if (e.key === "a") setTool("auto");
       else if (e.key === "p") setTool("polygon");
       else if (e.key === "b") setTool("bbox");
-      else if (e.key === "Escape") { setPolyPoints([]); setPending(null); setBboxStart(null); setBboxEnd(null); }
+      else if (e.key === "Escape") {
+        setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
+        clearPrompts();
+        setSelectedAnnId(null); setEditPoly(null);
+      }
       else if (e.key === "Enter" && tool === "polygon" && polyPoints.length >= 3) commitPolygon();
       else if (e.key === "Delete" || e.key === "Backspace") {
         if (hoverAnnId) deleteAnnotation(hoverAnnId);
@@ -195,8 +220,52 @@ export function WorkviewPage() {
     });
   }
 
+  // --- Auto-tool: multi-prompt predict whenever prompts change ---
+  const promptsKey = JSON.stringify(prompts);
+  useEffect(() => {
+    if (tool !== "auto") return;
+    if (prompts.points.length === 0 && !prompts.box) {
+      setPending(null);
+      return;
+    }
+    if (!image || image.status !== "ready") return;
+    if (!activeClassId) return;
+    let cancelled = false;
+    (async () => {
+      setPredicting(true); setError(null);
+      try {
+        const r = await api.predict(imageId, {
+          points: prompts.points.length ? prompts.points.map(([x, y]) => [x, y] as [number, number]) : undefined,
+          point_labels: prompts.points.length ? prompts.points.map(([, , l]) => l) : undefined,
+          box: prompts.box ? [
+            prompts.box[0], prompts.box[1],
+            prompts.box[0] + prompts.box[2], prompts.box[1] + prompts.box[3],
+          ] : undefined,
+          ...(predictModelId !== undefined ? { model_version_id: predictModelId } : {}),
+        });
+        if (!cancelled) setPending({ polygon: r.polygon, score: r.score, bbox: r.bbox });
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "predict failed");
+      } finally {
+        if (!cancelled) setPredicting(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promptsKey, tool, imageId, image?.status, activeClassId, predictModelId]);
+
+  function clearPrompts() {
+    setPrompts({ points: [], box: null });
+    setPending(null);
+    setAutoBoxPreview(null);
+    dragStartRef.current = null;
+    wasDragRef.current = false;
+  }
+
   // Click
-  async function onStageClick(_e: Konva.KonvaEventObject<MouseEvent>) {
+  async function onStageClick(e: Konva.KonvaEventObject<MouseEvent>) {
+    // Suppress click that came from a drag (auto box / vertex edit)
+    if (wasDragRef.current) { wasDragRef.current = false; return; }
     const stage = stageRef.current; if (!stage) return;
     const pos = stage.getPointerPosition(); if (!pos) return;
     const [ix, iy] = imagePoint(pos.x, pos.y);
@@ -209,34 +278,52 @@ export function WorkviewPage() {
         return;
       }
       if (!activeClassId) { setError("Pick a class on the right first."); return; }
-      setPredicting(true); setError(null);
-      try {
-        const r = await api.predict(imageId, {
-          points: [[ix, iy]], point_labels: [1],
-          ...(predictModelId !== undefined ? { model_version_id: predictModelId } : {}),
-        });
-        setPending({ polygon: r.polygon, score: r.score, bbox: r.bbox });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "predict failed");
-      } finally { setPredicting(false); }
+      const evt = e.evt;
+      const additive = evt.shiftKey || evt.altKey || evt.metaKey;
+      const label: 0 | 1 = evt.altKey ? 0 : 1;
+      if (additive && (prompts.points.length > 0 || prompts.box)) {
+        setPrompts((p) => ({ ...p, points: [...p.points, [ix, iy, label]] }));
+      } else {
+        setPrompts({ points: [[ix, iy, 1]], box: null });
+      }
     } else if (tool === "polygon") {
       setPolyPoints([...polyPoints, [ix, iy]]);
     }
   }
 
-  // Bbox drag
+  // Mouse down/move/up — handles bbox tool AND auto-tool drag-to-box
   function onMouseDown(_e: Konva.KonvaEventObject<MouseEvent>) {
-    if (tool !== "bbox") return;
-    const stage = stageRef.current; if (!stage) return;
-    const p = stage.getPointerPosition(); if (!p) return;
-    setBboxStart(imagePoint(p.x, p.y));
-    setBboxEnd(imagePoint(p.x, p.y));
+    if (tool === "bbox") {
+      const stage = stageRef.current; if (!stage) return;
+      const p = stage.getPointerPosition(); if (!p) return;
+      setBboxStart(imagePoint(p.x, p.y));
+      setBboxEnd(imagePoint(p.x, p.y));
+      return;
+    }
+    if (tool === "auto") {
+      const stage = stageRef.current; if (!stage) return;
+      const p = stage.getPointerPosition(); if (!p) return;
+      dragStartRef.current = imagePoint(p.x, p.y);
+      wasDragRef.current = false;
+      setAutoBoxPreview(null);
+    }
   }
   function onMouseMove() {
-    if (tool !== "bbox" || !bboxStart) return;
     const stage = stageRef.current; if (!stage) return;
     const p = stage.getPointerPosition(); if (!p) return;
-    setBboxEnd(imagePoint(p.x, p.y));
+    if (tool === "bbox" && bboxStart) {
+      setBboxEnd(imagePoint(p.x, p.y));
+      return;
+    }
+    if (tool === "auto" && dragStartRef.current) {
+      const [ix, iy] = imagePoint(p.x, p.y);
+      const [sx, sy] = dragStartRef.current;
+      const dx = Math.abs(ix - sx), dy = Math.abs(iy - sy);
+      if (dx > 4 || dy > 4) {
+        wasDragRef.current = true;
+        setAutoBoxPreview([Math.min(sx, ix), Math.min(sy, iy), dx, dy]);
+      }
+    }
   }
   async function onMouseUp() {
     if (tool === "bbox" && bboxStart && bboxEnd && image && activeClassId) {
@@ -255,6 +342,18 @@ export function WorkviewPage() {
         });
         setAnnotations((arr) => [...arr, a]);
       } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
+      return;
+    }
+    if (tool === "auto") {
+      if (wasDragRef.current && autoBoxPreview) {
+        // Drag-box prompt → REPLACES existing prompts
+        if (autoBoxPreview[2] >= 4 && autoBoxPreview[3] >= 4) {
+          setPrompts({ points: [], box: autoBoxPreview });
+        }
+        setAutoBoxPreview(null);
+      }
+      dragStartRef.current = null;
+      // wasDragRef cleared by the click handler that fires next
     }
   }
 
@@ -283,13 +382,63 @@ export function WorkviewPage() {
         confidence: pending.score,
       });
       setAnnotations((arr) => [...arr, a]);
-      setPending(null);
+      clearPrompts();
     } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
   }
 
   async function deleteAnnotation(id: string) {
     await api.deleteAnnotation(id);
     setAnnotations((arr) => arr.filter((a) => a.id !== id));
+    if (selectedAnnId === id) { setSelectedAnnId(null); setEditPoly(null); }
+  }
+
+  // ---- Polygon vertex editing ----
+  function selectAnnotation(a: Annotation) {
+    if (a.geometry_type !== "polygon" || !a.geometry.points) {
+      setSelectedAnnId(a.id); setEditPoly(null); return;
+    }
+    setSelectedAnnId(a.id);
+    setEditPoly(a.geometry.points.map((p: number[]) => [p[0], p[1]] as [number, number]));
+  }
+
+  async function flushEditPoly() {
+    if (!selectedAnnId || !editPoly) return;
+    try {
+      const updated = await api.updateAnnotation(selectedAnnId, {
+        geometry: { points: editPoly },
+      });
+      setAnnotations((arr) => arr.map((x) => (x.id === selectedAnnId ? updated : x)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "update failed");
+    }
+  }
+
+  function moveVertex(i: number, x: number, y: number) {
+    if (!editPoly) return;
+    const next = editPoly.slice();
+    next[i] = [x, y];
+    setEditPoly(next);
+  }
+
+  function deleteVertex(i: number) {
+    if (!editPoly || editPoly.length <= 3) {
+      setError("Polygon needs at least 3 vertices");
+      return;
+    }
+    const next = editPoly.filter((_, idx) => idx !== i);
+    setEditPoly(next);
+    setTimeout(flushEditPoly, 0);
+  }
+
+  function insertVertexAt(afterIndex: number) {
+    if (!editPoly) return;
+    const i = afterIndex;
+    const j = (i + 1) % editPoly.length;
+    const mx = (editPoly[i][0] + editPoly[j][0]) / 2;
+    const my = (editPoly[i][1] + editPoly[j][1]) / 2;
+    const next = [...editPoly.slice(0, j), [mx, my] as [number, number], ...editPoly.slice(j)];
+    setEditPoly(next);
+    setTimeout(flushEditPoly, 0);
   }
 
   const classMap = useMemo(() => {
@@ -340,7 +489,7 @@ export function WorkviewPage() {
         {/* Left toolbar */}
         <div className="w-14 bg-neutral-900 border-r border-neutral-800 flex flex-col items-center py-3 gap-2">
           <ToolBtn active={tool === "pan"} onClick={() => setTool("pan")} label="Pan (V)" icon="✋" />
-          <ToolBtn active={tool === "auto"} onClick={() => setTool("auto")} label="Auto-Annotate (A) — click to segment with SAM2" icon="✨" />
+          <ToolBtn active={tool === "auto"} onClick={() => setTool("auto")} label="Auto-Annotate (A) — click to segment, shift-click +pt, alt-click −pt, drag for box" icon="✨" />
           <ToolBtn active={tool === "polygon"} onClick={() => setTool("polygon")} label="Polygon (P)" icon="⬡" />
           <ToolBtn active={tool === "bbox"} onClick={() => setTool("bbox")} label="Bounding Box (B)" icon="▭" />
         </div>
@@ -396,16 +545,20 @@ export function WorkviewPage() {
               {annotations.map((a) => {
                 const cls = classMap.get(a.class_id);
                 const color = cls?.color ?? "#22c55e";
+                const isSelected = selectedAnnId === a.id;
                 if (a.geometry_type === "polygon" && a.geometry.points) {
-                  const flat = a.geometry.points.flat();
+                  // when selected, render the local edit buffer instead of saved geometry
+                  const pts = isSelected && editPoly ? editPoly : a.geometry.points;
+                  const flat = pts.flat();
                   return (
                     <Line
                       key={a.id}
                       points={flat}
                       closed
-                      fill={color + "33"}
+                      fill={color + (isSelected ? "55" : "33")}
                       stroke={color}
-                      strokeWidth={2 / view.scale}
+                      strokeWidth={(isSelected ? 3 : 2) / view.scale}
+                      onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
                       onMouseEnter={() => setHoverAnnId(a.id)}
                       onMouseLeave={() => setHoverAnnId(null)}
                     />
@@ -418,8 +571,9 @@ export function WorkviewPage() {
                       x={a.geometry.x} y={a.geometry.y!}
                       width={a.geometry.w!} height={a.geometry.h!}
                       stroke={color}
-                      strokeWidth={2 / view.scale}
+                      strokeWidth={(isSelected ? 3 : 2) / view.scale}
                       fill={color + "22"}
+                      onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
                       onMouseEnter={() => setHoverAnnId(a.id)}
                       onMouseLeave={() => setHoverAnnId(null)}
                     />
@@ -427,6 +581,49 @@ export function WorkviewPage() {
                 }
                 return null;
               })}
+
+              {/* Vertex + edge-midpoint handles for selected polygon */}
+              {selectedAnnId && editPoly && (() => {
+                const sel = annotations.find((x) => x.id === selectedAnnId);
+                const color = sel ? (classMap.get(sel.class_id)?.color ?? "#3b82f6") : "#3b82f6";
+                const r = 5 / view.scale;
+                const er = 3.5 / view.scale;
+                return (
+                  <>
+                    {editPoly.map(([x, y], i) => {
+                      const j = (i + 1) % editPoly.length;
+                      const mx = (x + editPoly[j][0]) / 2;
+                      const my = (y + editPoly[j][1]) / 2;
+                      return (
+                        <Circle
+                          key={`mid-${i}`}
+                          x={mx} y={my} radius={er}
+                          fill="#ffffff" stroke={color}
+                          strokeWidth={1 / view.scale}
+                          opacity={0.8}
+                          onClick={(ev) => { ev.cancelBubble = true; wasDragRef.current = true; insertVertexAt(i); }}
+                        />
+                      );
+                    })}
+                    {editPoly.map(([x, y], i) => (
+                      <Circle
+                        key={`v-${i}`}
+                        x={x} y={y} radius={r}
+                        fill={color} stroke="#ffffff"
+                        strokeWidth={1.5 / view.scale}
+                        draggable
+                        onClick={(ev) => {
+                          if (ev.evt.shiftKey || ev.evt.altKey) {
+                            ev.cancelBubble = true; wasDragRef.current = true; deleteVertex(i);
+                          }
+                        }}
+                        onDragMove={(ev) => moveVertex(i, ev.target.x(), ev.target.y())}
+                        onDragEnd={() => { wasDragRef.current = true; flushEditPoly(); }}
+                      />
+                    ))}
+                  </>
+                );
+              })()}
             </Layer>
 
             {/* Pending (in-progress) */}
@@ -439,6 +636,31 @@ export function WorkviewPage() {
                   stroke={activeClass.color}
                   strokeWidth={2 / view.scale}
                   dash={[6 / view.scale, 4 / view.scale]}
+                />
+              )}
+              {/* SAM2 prompt markers */}
+              {prompts.points.map(([x, y, label], i) => (
+                <Circle
+                  key={`pp-${i}`}
+                  x={x} y={y} radius={6 / view.scale}
+                  fill={label === 1 ? "#22c55e" : "#ef4444"}
+                  stroke="#ffffff" strokeWidth={1.5 / view.scale}
+                />
+              ))}
+              {prompts.box && (
+                <Rect
+                  x={prompts.box[0]} y={prompts.box[1]}
+                  width={prompts.box[2]} height={prompts.box[3]}
+                  stroke="#3b82f6" strokeWidth={2 / view.scale}
+                  dash={[8 / view.scale, 4 / view.scale]}
+                />
+              )}
+              {autoBoxPreview && (
+                <Rect
+                  x={autoBoxPreview[0]} y={autoBoxPreview[1]}
+                  width={autoBoxPreview[2]} height={autoBoxPreview[3]}
+                  stroke="#3b82f6" strokeWidth={1.5 / view.scale}
+                  dash={[4 / view.scale, 4 / view.scale]} opacity={0.7}
                 />
               )}
               {polyPoints.length > 0 && activeClass && (
