@@ -43,6 +43,19 @@ class ModelVersionStatus(str, Enum):
     FAILED = "failed"
 
 
+class ClassPropertyType(str, Enum):
+    """How a per-class attribute is captured for each annotation.
+
+    - SINGLE: one-of (radio / dropdown), value is a string from `options`
+    - MULTI:  any-of (checkboxes), value is a list[str] (subset of `options`)
+    - TEXT:   free-form string
+    """
+
+    SINGLE = "single"
+    MULTI = "multi"
+    TEXT = "text"
+
+
 # ---------- Tables ----------
 class User(SQLModel, table=True):
     __tablename__ = "users"
@@ -154,5 +167,25 @@ class Annotation(SQLModel, table=True):
     #   bbox:    {"x":, "y":, "w":, "h":}
     source: AnnotationSource = Field(default=AnnotationSource.MANUAL)
     confidence: float | None = None
+    properties: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # properties shape: {<class_property_id>: <value>}
+    #   single → str
+    #   multi  → list[str]
+    #   text   → str
     created_by: UUID | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class ClassProperty(SQLModel, table=True):
+    """Per-class attribute schema (V7 calls these 'properties')."""
+
+    __tablename__ = "class_properties"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    class_id: UUID = Field(foreign_key="classes.id", index=True)
+    name: str = Field(max_length=255)
+    type: ClassPropertyType = Field(default=ClassPropertyType.SINGLE)
+    options: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    required: bool = Field(default=False)
+    sort_order: int = Field(default=0, index=True)
     created_at: datetime = Field(default_factory=utcnow)

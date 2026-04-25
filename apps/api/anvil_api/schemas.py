@@ -7,7 +7,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from anvil_api.models import AnnotationSource, GeometryType, ImageStatus, ModelVersionStatus
+from anvil_api.models import (
+    AnnotationSource,
+    ClassPropertyType,
+    GeometryType,
+    ImageStatus,
+    ModelVersionStatus,
+)
 
 
 # ---- Auth
@@ -100,6 +106,40 @@ class ClassOut(BaseModel):
     annotation_count: int = 0
 
 
+class ClassPatch(BaseModel):
+    name: str | None = None
+    color: str | None = None
+    geometry_type: GeometryType | None = None
+    description: str | None = None
+
+
+# ---- Class properties (per-class attribute schema)
+class ClassPropertyIn(BaseModel):
+    name: str
+    type: ClassPropertyType = ClassPropertyType.SINGLE
+    options: list[str] = []
+    required: bool = False
+    sort_order: int = 0
+
+
+class ClassPropertyPatch(BaseModel):
+    name: str | None = None
+    type: ClassPropertyType | None = None
+    options: list[str] | None = None
+    required: bool | None = None
+    sort_order: int | None = None
+
+
+class ClassPropertyOut(BaseModel):
+    id: UUID
+    class_id: UUID
+    name: str
+    type: ClassPropertyType
+    options: list[str]
+    required: bool
+    sort_order: int
+
+
 # ---- Annotations
 class AnnotationIn(BaseModel):
     class_id: UUID
@@ -107,12 +147,14 @@ class AnnotationIn(BaseModel):
     geometry: dict[str, Any]
     source: AnnotationSource = AnnotationSource.MANUAL
     confidence: float | None = None
+    properties: dict[str, Any] = {}
 
 
 class AnnotationPatch(BaseModel):
     class_id: UUID | None = None
     geometry_type: GeometryType | None = None
     geometry: dict[str, Any] | None = None
+    properties: dict[str, Any] | None = None
 
 
 class AnnotationOut(BaseModel):
@@ -123,6 +165,7 @@ class AnnotationOut(BaseModel):
     geometry: dict[str, Any]
     source: AnnotationSource
     confidence: float | None
+    properties: dict[str, Any] = {}
     created_at: datetime
 
 

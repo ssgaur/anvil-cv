@@ -67,6 +67,18 @@ export interface ImageRow {
 
 export type GeometryType = "polygon" | "bbox" | "brush";
 
+export type ClassPropertyType = "single" | "multi" | "text";
+
+export interface ClassProperty {
+  id: string;
+  class_id: string;
+  name: string;
+  type: ClassPropertyType;
+  options: string[];
+  required: boolean;
+  sort_order: number;
+}
+
 export interface ClassRow {
   id: string;
   project_id: string;
@@ -87,6 +99,7 @@ export interface Annotation {
   geometry: { points?: [number, number][]; x?: number; y?: number; w?: number; h?: number };
   source: AnnotationSource;
   confidence: number | null;
+  properties: Record<string, string | string[]>;
   created_at: string;
 }
 

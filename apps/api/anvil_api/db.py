@@ -20,6 +20,10 @@ def init_db() -> None:
         conn.execute(text(
             "ALTER TABLE projects ADD COLUMN IF NOT EXISTS active_model_version_id UUID"
         ))
+        # Per-annotation user-defined properties (class-property values)
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS properties JSONB NOT NULL DEFAULT '{}'::jsonb"
+        ))
 
 
 def get_session() -> Iterator[Session]:

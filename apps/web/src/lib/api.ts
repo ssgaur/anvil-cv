@@ -1,5 +1,5 @@
 import type {
-  Annotation, ClassRow, Dataset, ImageRow, ModelVersion, PredictResponse, Project, User,
+  Annotation, ClassProperty, ClassPropertyType, ClassRow, Dataset, ImageRow, ModelVersion, PredictResponse, Project, User,
 } from "../types";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -150,12 +150,36 @@ export const api = {
   // Classes
   listClasses: (projectId: string) =>
     req<ClassRow[]>(`/api/projects/${projectId}/classes`),
-  createClass: (projectId: string, body: { name: string; color?: string; geometry_type?: string }) =>
+  createClass: (projectId: string, body: { name: string; color?: string; geometry_type?: string; description?: string }) =>
     req<ClassRow>(`/api/projects/${projectId}/classes`, {
       method: "POST", body: JSON.stringify(body),
     }),
+  patchClass: (projectId: string, classId: string, body: {
+    name?: string; color?: string; geometry_type?: string; description?: string;
+  }) =>
+    req<ClassRow>(`/api/projects/${projectId}/classes/${classId}`, {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
   deleteClass: (projectId: string, classId: string) =>
     req<void>(`/api/projects/${projectId}/classes/${classId}`, { method: "DELETE" }),
+
+  // Class properties (per-class attribute schema)
+  listClassProperties: (projectId: string, classId: string) =>
+    req<ClassProperty[]>(`/api/projects/${projectId}/classes/${classId}/properties`),
+  createClassProperty: (projectId: string, classId: string, body: {
+    name: string; type: ClassPropertyType; options?: string[]; required?: boolean; sort_order?: number;
+  }) =>
+    req<ClassProperty>(`/api/projects/${projectId}/classes/${classId}/properties`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  patchClassProperty: (projectId: string, classId: string, propertyId: string, body: {
+    name?: string; type?: ClassPropertyType; options?: string[]; required?: boolean; sort_order?: number;
+  }) =>
+    req<ClassProperty>(`/api/projects/${projectId}/classes/${classId}/properties/${propertyId}`, {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
+  deleteClassProperty: (projectId: string, classId: string, propertyId: string) =>
+    req<void>(`/api/projects/${projectId}/classes/${classId}/properties/${propertyId}`, { method: "DELETE" }),
 
   // Annotations
   listAnnotations: (imageId: string) =>
@@ -172,7 +196,7 @@ export const api = {
     }),
   deleteAnnotation: (id: string) =>
     req<void>(`/api/annotations/${id}`, { method: "DELETE" }),
-  updateAnnotation: (id: string, patch: { geometry?: any; geometry_type?: string; class_id?: string }) =>
+  updateAnnotation: (id: string, patch: { geometry?: any; geometry_type?: string; class_id?: string; properties?: Record<string, string | string[]> }) =>
     req<Annotation>(`/api/annotations/${id}`, {
       method: "PATCH", body: JSON.stringify(patch),
     }),

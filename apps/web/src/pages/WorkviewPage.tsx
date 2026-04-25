@@ -4,7 +4,7 @@ import { Circle, Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
 import Konva from "konva";
 import { extractLargestPolygon } from "../lib/brush";
 import { api, fileUrl } from "../lib/api";
-import type { Annotation, ClassRow, ImageRow, ModelVersion } from "../types";
+import type { Annotation, ClassProperty, ClassRow, ImageRow, ModelVersion } from "../types";
 
 type Tool = "pan" | "auto" | "polygon" | "bbox" | "brush";
 
@@ -48,6 +48,9 @@ export function WorkviewPage() {
   const [editBbox, setEditBbox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   // Snapshot of the annotation taken when entering edit mode (for undo of polygon edits)
   const editBeforeRef = useRef<Annotation | null>(null);
+
+  // Cache of class properties per class id, lazy-loaded when an annotation is selected
+  const [classPropsCache, setClassPropsCache] = useState<Record<string, ClassProperty[]>>({});
 
   // ---- Brush tool
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -289,6 +292,41 @@ export function WorkviewPage() {
   useEffect(() => {
     api.listImages(projectId, datasetId, { limit: 500 }).then(setSiblings);
   }, [projectId, datasetId]);
+
+  // Lazy-load class properties when an annotation is selected (cached by class_id)
+  const selectedAnn = useMemo(
+    () => annotations.find((a) => a.id === selectedAnnId) ?? null,
+    [annotations, selectedAnnId],
+  );
+  useEffect(() => {
+    const cid = selectedAnn?.class_id;
+    if (!cid || classPropsCache[cid]) return;
+    api.listClassProperties(projectId, cid)
+      .then((props) => setClassPropsCache((m) => ({ ...m, [cid]: props })))
+      .catch(() => {/* swallow — panel will just show empty */});
+  }, [selectedAnn, projectId, classPropsCache]);
+
+  async function setAnnotationProperty(annId: string, propId: string, value: string | string[] | null) {
+    const ann = annotations.find((a) => a.id === annId);
+    if (!ann) return;
+    const next = { ...(ann.properties ?? {}) };
+    if (value === null || value === "" || (Array.isArray(value) && value.length === 0)) {
+      delete next[propId];
+    } else {
+      next[propId] = value;
+    }
+    // optimistic
+    setAnnotations((arr) => arr.map((a) => a.id === annId ? { ...a, properties: next } : a));
+    try {
+      const updated = await api.updateAnnotation(annId, { properties: next });
+      setAnnotations((arr) => arr.map((a) => a.id === annId ? updated : a));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to update property");
+      // rollback by reloading
+      api.listAnnotations(imageId).then(setAnnotations);
+    }
+  }
+
 
   // Poll if image not ready
   useEffect(() => {
@@ -1261,6 +1299,40 @@ export function WorkviewPage() {
             )}
           </div>
 
+          {selectedAnn && (() => {
+            const props = classPropsCache[selectedAnn.class_id] ?? [];
+            const cls = classMap.get(selectedAnn.class_id);
+            return (
+              <div className="p-3 border-b border-neutral-800 bg-neutral-900/60">
+                <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2 flex items-center gap-2">
+                  <span>Properties</span>
+                  <span className="lowercase text-[10px] normal-case text-neutral-600">
+                    · {cls?.name ?? "?"}
+                  </span>
+                </div>
+                {props.length === 0 ? (
+                  <div className="text-xs text-neutral-600">
+                    No properties defined for this class.{" "}
+                    <Link to={`/projects/${projectId}`} className="text-emerald-400 hover:underline">
+                      Add some →
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {props.map((p) => (
+                      <PropertyControl
+                        key={p.id}
+                        property={p}
+                        value={selectedAnn.properties?.[p.id] ?? (p.type === "multi" ? [] : "")}
+                        onChange={(v) => setAnnotationProperty(selectedAnn.id, p.id, v)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           <div className="flex-1 overflow-y-auto p-3">
             <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
               Annotations ({annotations.length})
@@ -1479,6 +1551,92 @@ function Cheatsheet({ onClose }: { onClose: () => void }) {
           <kbd className="px-1 rounded bg-neutral-800 border border-neutral-700">H</kbd> to toggle this panel.
         </div>
       </div>
+    </div>
+  );
+}
+
+function PropertyControl({
+  property, value, onChange,
+}: {
+  property: ClassProperty;
+  value: string | string[];
+  onChange: (v: string | string[] | null) => void;
+}) {
+  const label = (
+    <div className="text-xs text-neutral-300 mb-1 flex items-center gap-1.5">
+      <span className="font-medium">{property.name}</span>
+      {property.required && <span className="text-amber-400 text-[10px]">required</span>}
+      <span className="text-neutral-600 text-[10px] ml-auto">{property.type}</span>
+    </div>
+  );
+
+  if (property.type === "single") {
+    const v = typeof value === "string" ? value : "";
+    return (
+      <div>
+        {label}
+        <div className="flex flex-wrap gap-1">
+          {property.options.map((opt) => (
+            <button
+              key={opt}
+              onClick={() => onChange(v === opt ? null : opt)}
+              className={`px-2 py-1 rounded text-xs border ${
+                v === opt
+                  ? "bg-emerald-500 text-neutral-950 border-emerald-500 font-medium"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:border-neutral-700"
+              }`}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (property.type === "multi") {
+    const arr = Array.isArray(value) ? value : [];
+    return (
+      <div>
+        {label}
+        <div className="flex flex-wrap gap-1">
+          {property.options.map((opt) => {
+            const on = arr.includes(opt);
+            return (
+              <button
+                key={opt}
+                onClick={() => onChange(on ? arr.filter((x) => x !== opt) : [...arr, opt])}
+                className={`px-2 py-1 rounded text-xs border ${
+                  on
+                    ? "bg-emerald-500 text-neutral-950 border-emerald-500 font-medium"
+                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:border-neutral-700"
+                }`}
+              >
+                {on ? "✓ " : ""}{opt}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // text
+  const v = typeof value === "string" ? value : "";
+  return (
+    <div>
+      {label}
+      <input
+        className="w-full bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-xs focus:border-emerald-500 outline-none"
+        defaultValue={v}
+        onBlur={(e) => {
+          const next = e.target.value;
+          if (next !== v) onChange(next || null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+      />
     </div>
   );
 }

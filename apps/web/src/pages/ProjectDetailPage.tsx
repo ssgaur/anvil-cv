@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
-import type { ClassRow, Dataset, ModelVersion, Project } from "../types";
+import type { ClassProperty, ClassPropertyType, ClassRow, Dataset, ModelVersion, Project } from "../types";
 
 const TABS = ["Data", "Classes", "Models", "Settings"] as const;
 type Tab = (typeof TABS)[number];
@@ -128,17 +128,20 @@ function DataTab({ projectId, datasets, onReload }: { projectId: string; dataset
 }
 
 const PALETTE = [
-  "#22c55e", "#3b82f6", "#ef4444", "#f59e0b", "#a855f7",
-  "#06b6d4", "#ec4899", "#84cc16", "#eab308", "#14b8a6",
-  "#f97316", "#8b5cf6", "#10b981", "#0ea5e9", "#f43f5e",
+  // Mirror of API curated palette — high-contrast against neutral-950
+  "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16", "#22c55e",
+  "#10b981", "#14b8a6", "#06b6d4", "#0ea5e9", "#3b82f6", "#6366f1",
+  "#8b5cf6", "#a855f7", "#d946ef", "#ec4899", "#f43f5e", "#fb7185",
+  "#facc15", "#22d3ee", "#34d399", "#a78bfa", "#fbbf24", "#fca5a5",
 ];
 
 function ClassesTab({ projectId, classes, onReload }: { projectId: string; classes: ClassRow[]; onReload: () => void }) {
   const [name, setName] = useState("");
-  const [color, setColor] = useState(PALETTE[0]);
+  const [color, setColor] = useState(PALETTE[5]);  // default green
   const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  async function create(e: React.FormEvent) {
+  async function create(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     setBusy(true);
@@ -152,23 +155,14 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
   }
 
   return (
-    <div className="max-w-2xl">
-      <form onSubmit={create} className="flex gap-2 mb-6 items-center">
+    <div className="max-w-3xl">
+      <form onSubmit={create} className="flex gap-2 mb-6 items-center flex-wrap">
         <input
-          className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:border-emerald-500 outline-none"
-          placeholder="Class name (e.g. sunkenAreas)"
+          className="flex-1 min-w-[200px] bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:border-emerald-500 outline-none"
+          placeholder="Class name (e.g. cucumber, sunkenArea)"
           value={name} onChange={(e) => setName(e.target.value)}
         />
-        <div className="flex gap-1">
-          {PALETTE.slice(0, 10).map((c) => (
-            <button
-              type="button" key={c}
-              onClick={() => setColor(c)}
-              className={`w-6 h-6 rounded ${color === c ? "ring-2 ring-white ring-offset-2 ring-offset-neutral-950" : ""}`}
-              style={{ background: c }}
-            />
-          ))}
-        </div>
+        <PaletteRow color={color} onPick={setColor} />
         <button disabled={busy || !name.trim()} className="bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 px-4 py-2 rounded text-sm font-medium">
           Add class
         </button>
@@ -177,19 +171,301 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
       {classes.length === 0 ? (
         <div className="text-neutral-500 text-sm">No classes yet. Add one before annotating.</div>
       ) : (
-        <ul className="divide-y divide-neutral-800 border border-neutral-800 rounded">
+        <ul className="space-y-2">
           {classes.map((c) => (
-            <li key={c.id} className="flex items-center gap-3 px-4 py-3 group">
-              <span className="w-4 h-4 rounded" style={{ background: c.color }} />
-              <span className="font-medium">{c.name}</span>
-              <span className="text-xs text-neutral-500">{c.geometry_type}</span>
-              <span className="ml-auto text-xs text-neutral-400">{c.annotation_count} annotations</span>
-              <button onClick={() => del(c)} className="text-neutral-600 hover:text-rose-400 opacity-0 group-hover:opacity-100">✕</button>
-            </li>
+            <ClassCard
+              key={c.id}
+              projectId={projectId}
+              cls={c}
+              expanded={editingId === c.id}
+              onExpand={() => setEditingId(editingId === c.id ? null : c.id)}
+              onDelete={() => del(c)}
+              onChanged={onReload}
+            />
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+function PaletteRow({ color, onPick }: { color: string; onPick: (c: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1 max-w-[280px]">
+      {PALETTE.map((c) => (
+        <button
+          type="button" key={c}
+          onClick={() => onPick(c)}
+          title={c}
+          className={`w-5 h-5 rounded ${color === c ? "ring-2 ring-white ring-offset-2 ring-offset-neutral-950" : ""}`}
+          style={{ background: c }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ClassCard({
+  projectId, cls, expanded, onExpand, onDelete, onChanged,
+}: {
+  projectId: string; cls: ClassRow; expanded: boolean;
+  onExpand: () => void; onDelete: () => void; onChanged: () => void;
+}) {
+  const [name, setName] = useState(cls.name);
+  const [color, setColor] = useState(cls.color);
+  const [description, setDescription] = useState(cls.description ?? "");
+  const [savingMeta, setSavingMeta] = useState(false);
+  const [props, setProps] = useState<ClassProperty[] | null>(null);
+  const [propsErr, setPropsErr] = useState<string | null>(null);
+  const dirty = name !== cls.name || color !== cls.color || description !== (cls.description ?? "");
+
+  useEffect(() => {
+    if (!expanded || props !== null) return;
+    api.listClassProperties(projectId, cls.id)
+      .then(setProps).catch((e) => setPropsErr(e instanceof Error ? e.message : "failed"));
+  }, [expanded, projectId, cls.id, props]);
+
+  async function saveMeta() {
+    setSavingMeta(true);
+    try {
+      await api.patchClass(projectId, cls.id, {
+        name: name.trim() || cls.name, color, description,
+      });
+      onChanged();
+    } finally { setSavingMeta(false); }
+  }
+
+  async function reloadProps() {
+    setProps(await api.listClassProperties(projectId, cls.id));
+  }
+
+  return (
+    <li className="border border-neutral-800 rounded bg-neutral-950/40">
+      <button
+        onClick={onExpand}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-neutral-900/40 text-left"
+      >
+        <span className="w-4 h-4 rounded shrink-0" style={{ background: cls.color }} />
+        <span className="font-medium">{cls.name}</span>
+        <span className="text-xs text-neutral-500">{cls.geometry_type}</span>
+        <span className="ml-auto text-xs text-neutral-400">{cls.annotation_count} ann · {expanded ? "▼" : "▶"}</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-neutral-800 p-4 space-y-4">
+          {/* Meta */}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-xs text-neutral-500 block mb-1">Name</label>
+              <input
+                className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-1.5 text-sm focus:border-emerald-500 outline-none"
+                value={name} onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-neutral-500 block mb-1">Color</label>
+              <PaletteRow color={color} onPick={setColor} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-neutral-500 block mb-1">Description</label>
+            <textarea
+              className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-1.5 text-sm focus:border-emerald-500 outline-none"
+              rows={2}
+              value={description} onChange={(e) => setDescription(e.target.value)}
+              placeholder="(optional) what counts / doesn't count for this class"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              disabled={!dirty || savingMeta}
+              onClick={saveMeta}
+              className="bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 px-3 py-1.5 rounded text-sm font-medium"
+            >
+              {savingMeta ? "Saving…" : "Save changes"}
+            </button>
+            <button onClick={onDelete} className="ml-auto text-rose-400 hover:text-rose-300 text-sm">
+              Delete class
+            </button>
+          </div>
+
+          {/* Properties */}
+          <div className="pt-3 border-t border-neutral-800">
+            <div className="text-xs uppercase tracking-wide text-neutral-500 mb-2">
+              Properties (per-annotation attributes)
+            </div>
+            {propsErr && <div className="text-xs text-rose-400 mb-2">{propsErr}</div>}
+            {props === null ? (
+              <div className="text-xs text-neutral-500">loading…</div>
+            ) : (
+              <ClassPropertyEditor
+                projectId={projectId} classId={cls.id} properties={props}
+                onChanged={reloadProps}
+              />
+            )}
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function ClassPropertyEditor({
+  projectId, classId, properties, onChanged,
+}: {
+  projectId: string; classId: string; properties: ClassProperty[];
+  onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [type, setType] = useState<ClassPropertyType>("single");
+  const [optsText, setOptsText] = useState("");
+  const [required, setRequired] = useState(false);
+
+  async function add() {
+    if (!name.trim()) return;
+    const options = (type === "single" || type === "multi")
+      ? optsText.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    if ((type === "single" || type === "multi") && options.length === 0) {
+      alert("Add at least one option (comma-separated) for single/multi properties.");
+      return;
+    }
+    setAdding(true);
+    try {
+      await api.createClassProperty(projectId, classId, {
+        name: name.trim(), type, options, required,
+        sort_order: properties.length,
+      });
+      setName(""); setOptsText(""); setRequired(false);
+      onChanged();
+    } finally { setAdding(false); }
+  }
+
+  return (
+    <div className="space-y-2">
+      {properties.length === 0 ? (
+        <div className="text-xs text-neutral-500">No properties yet. Add one to capture per-annotation attributes (e.g. <code>severity = mild | moderate | severe</code>).</div>
+      ) : (
+        <ul className="divide-y divide-neutral-800 border border-neutral-800 rounded">
+          {properties.map((p) => (
+            <ClassPropertyRow key={p.id} projectId={projectId} classId={classId} property={p} onChanged={onChanged} />
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-end gap-2 pt-1">
+        <div className="flex-1 min-w-[140px]">
+          <label className="text-xs text-neutral-500 block mb-0.5">Property name</label>
+          <input
+            className="w-full bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-sm focus:border-emerald-500 outline-none"
+            placeholder="e.g. severity"
+            value={name} onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-neutral-500 block mb-0.5">Type</label>
+          <select
+            className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-sm"
+            value={type} onChange={(e) => setType(e.target.value as ClassPropertyType)}
+          >
+            <option value="single">Single (radio)</option>
+            <option value="multi">Multi (checkboxes)</option>
+            <option value="text">Text</option>
+          </select>
+        </div>
+        {(type === "single" || type === "multi") && (
+          <div className="flex-1 min-w-[180px]">
+            <label className="text-xs text-neutral-500 block mb-0.5">Options (comma-separated)</label>
+            <input
+              className="w-full bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-sm focus:border-emerald-500 outline-none"
+              placeholder="e.g. mild, moderate, severe"
+              value={optsText} onChange={(e) => setOptsText(e.target.value)}
+            />
+          </div>
+        )}
+        <label className="flex items-center gap-1.5 text-xs text-neutral-400 pb-1">
+          <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} />
+          Required
+        </label>
+        <button
+          disabled={adding || !name.trim()}
+          onClick={add}
+          className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-neutral-100 px-3 py-1 rounded text-sm"
+        >
+          + Add property
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ClassPropertyRow({
+  projectId, classId, property, onChanged,
+}: {
+  projectId: string; classId: string; property: ClassProperty; onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(property.name);
+  const [optsText, setOptsText] = useState(property.options.join(", "));
+  const [required, setRequired] = useState(property.required);
+
+  async function save() {
+    const options = (property.type === "single" || property.type === "multi")
+      ? optsText.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    await api.patchClassProperty(projectId, classId, property.id, {
+      name: name.trim() || property.name,
+      options, required,
+    });
+    setEditing(false);
+    onChanged();
+  }
+
+  async function del() {
+    if (!confirm(`Delete property "${property.name}"? Existing values on annotations will be cleared.`)) return;
+    await api.deleteClassProperty(projectId, classId, property.id);
+    onChanged();
+  }
+
+  if (editing) {
+    return (
+      <li className="px-3 py-2 space-y-1.5 bg-neutral-900/40">
+        <div className="flex flex-wrap gap-2 items-center">
+          <input
+            className="flex-1 min-w-[120px] bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-sm"
+            value={name} onChange={(e) => setName(e.target.value)}
+          />
+          <span className="text-xs text-neutral-500">{property.type}</span>
+          <label className="flex items-center gap-1 text-xs text-neutral-400">
+            <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} />
+            required
+          </label>
+        </div>
+        {(property.type === "single" || property.type === "multi") && (
+          <input
+            className="w-full bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-sm"
+            placeholder="options, comma-separated"
+            value={optsText} onChange={(e) => setOptsText(e.target.value)}
+          />
+        )}
+        <div className="flex gap-2">
+          <button onClick={save} className="text-emerald-400 text-xs">Save</button>
+          <button onClick={() => setEditing(false)} className="text-neutral-500 text-xs">Cancel</button>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li className="px-3 py-2 flex items-center gap-3 group">
+      <span className="font-medium text-sm">{property.name}</span>
+      <span className="text-xs text-neutral-500">{property.type}</span>
+      {property.required && <span className="text-xs text-amber-400">required</span>}
+      {property.options.length > 0 && (
+        <span className="text-xs text-neutral-500 truncate">{property.options.join(" · ")}</span>
+      )}
+      <button onClick={() => setEditing(true)} className="ml-auto text-neutral-500 hover:text-neutral-300 text-xs opacity-0 group-hover:opacity-100">edit</button>
+      <button onClick={del} className="text-neutral-600 hover:text-rose-400 text-xs opacity-0 group-hover:opacity-100">✕</button>
+    </li>
   );
 }
 
