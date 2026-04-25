@@ -53,13 +53,14 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-anvil} ${MINIO_ROOT_PASSWORD:-anvilanvil} &&
-      mc mb -p local/${STORAGE_BUCKET:-anvil} || true &&
-      mc anonymous set download local/${STORAGE_BUCKET:-anvil} || true &&
-      echo 'minio bucket ready'
-      "
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-anvil} ${MINIO_ROOT_PASSWORD:-anvilanvil}
+        mc mb -p local/${STORAGE_BUCKET:-anvil} || true
+        mc anonymous set download local/${STORAGE_BUCKET:-anvil} || true
+        echo 'minio bucket ready'
     restart: "no"
 
   # First-run only: download SAM2 base+ weights (~700 MB) into a named volume,
@@ -68,18 +69,20 @@ services:
     image: alpine:3.20
     volumes:
       - checkpoints:/checkpoints
-    entrypoint: >
-      /bin/sh -c "
-      if [ -f /checkpoints/sam2.1_hiera_base_plus.pt ]; then
-        echo 'sam2 checkpoint already present, skipping';
-      else
-        echo 'installing curl...';
-        apk add --no-cache curl;
-        echo 'downloading sam2.1_hiera_base_plus.pt (~700 MB)...';
-        curl -L --fail -o /checkpoints/sam2.1_hiera_base_plus.pt
-          https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt;
-      fi
-      "
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ -f /checkpoints/sam2.1_hiera_base_plus.pt ]; then
+          echo 'sam2 checkpoint already present, skipping'
+          exit 0
+        fi
+        echo 'installing curl...'
+        apk add --no-cache curl
+        echo 'downloading sam2.1_hiera_base_plus.pt (~700 MB)...'
+        curl -L --fail -o /checkpoints/sam2.1_hiera_base_plus.pt \
+          https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt
+        echo 'checkpoint ready'
     restart: "no"
 
   api:
