@@ -43,22 +43,25 @@ You need **Docker** (Desktop on macOS/Windows, or Engine on Linux). That's it. N
 ```bash
 git clone https://github.com/ssgaur/anvil-cv.git
 cd anvil-cv
-make up
+cp .env.example .env
+docker compose up -d --build
 ```
 
 Then open <http://localhost:5173>.
 
-First run takes 5–10 minutes — Docker pulls images, builds the services, and downloads the SAM2 base checkpoint (~700 MB) into a Docker volume. Subsequent `make up` runs start in seconds.
+First run takes 5–10 minutes — Docker pulls images, builds the services, and downloads the SAM2 base checkpoint (~700 MB) into a Docker volume. Subsequent starts take seconds.
 
-Other useful targets:
+Common operations:
 
 ```bash
-make logs        # tail all service logs
-make ps          # see container status
-make down        # stop everything (data preserved)
-make clean       # stop and wipe all volumes (DB, MinIO, checkpoints)
-make rebuild     # force rebuild after Dockerfile changes
+docker compose logs -f --tail=100        # tail all service logs
+docker compose ps                        # container status
+docker compose down                      # stop everything (data preserved)
+docker compose down -v                   # stop and wipe all volumes (DB, MinIO, checkpoints)
+docker compose build --no-cache          # force rebuild after Dockerfile changes
 ```
+
+> If you have GNU `make` installed (Linux/macOS by default; Windows via WSL or Chocolatey), there are short aliases for these — `make up`, `make down`, `make clean`, `make logs`, `make ps`, `make rebuild`. They wrap the same `docker compose` commands above. Use whichever you prefer.
 
 Ports:
 

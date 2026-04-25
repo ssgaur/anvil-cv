@@ -46,7 +46,7 @@ Single-user today. Org / members / roles is on the roadmap (Phase 4-ish).
 
 ### How do I self-host in production?
 
-Easiest path is `make up` from a server with Docker installed — that gives you the full stack on one box (Postgres + Redis + MinIO + API + ML + worker + web). For real production, swap MinIO for S3, point `DATABASE_URL` at managed Postgres, and run the ML service on a GPU box. See [ARCHITECTURE.md](ARCHITECTURE.md) for the deployment topology.
+Easiest path is `docker compose up -d --build` from a server with Docker installed — that gives you the full stack on one box (Postgres + Redis + MinIO + API + ML + worker + web). For real production, swap MinIO for S3, point `DATABASE_URL` at managed Postgres, and run the ML service on a GPU box. See [ARCHITECTURE.md](ARCHITECTURE.md) for the deployment topology.
 
 ### What's the license?
 
