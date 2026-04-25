@@ -65,7 +65,7 @@ services:
   # First-run only: download SAM2 base+ weights (~700 MB) into a named volume,
   # so it survives container rebuilds. Skips if the file already exists.
   init-checkpoint:
-    image: curlimages/curl:8.10.1
+    image: alpine:3.20
     volumes:
       - checkpoints:/checkpoints
     entrypoint: >
@@ -73,8 +73,10 @@ services:
       if [ -f /checkpoints/sam2.1_hiera_base_plus.pt ]; then
         echo 'sam2 checkpoint already present, skipping';
       else
+        echo 'installing curl...';
+        apk add --no-cache curl;
         echo 'downloading sam2.1_hiera_base_plus.pt (~700 MB)...';
-        curl -L --fail -o /checkpoints/sam2.1_hiera_base_plus.pt \
+        curl -L --fail -o /checkpoints/sam2.1_hiera_base_plus.pt
           https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt;
       fi
       "
