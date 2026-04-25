@@ -38,3 +38,36 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm typecheck
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare .env
+        run: cp .env.example .env
+      - name: Build images (api + web + worker)
+        run: docker compose build api web worker
+      - name: Start core stack (skip ml + init-checkpoint to avoid 700MB SAM2 download)
+        run: docker compose up -d --wait postgres redis minio minio-init api worker web
+      - name: API health
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            curl -fsS http://localhost:8000/health && exit 0
+            sleep 3
+          done
+          echo "api /health did not respond"
+          exit 1
+      - name: Web responds
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            curl -fsS http://localhost:5173/ -o /dev/null && exit 0
+            sleep 3
+          done
+          echo "web did not respond on :5173"
+          exit 1
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
