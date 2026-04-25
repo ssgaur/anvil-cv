@@ -116,6 +116,7 @@ def _polygon_area(points: list[list[float]]) -> float:
 def export_coco(
     project_id: UUID, dataset_id: UUID, session: SessionDep, user: CurrentUser,
     include_images: bool = True,
+    review_status: str | None = None,
 ) -> Response:
     """Export the dataset as a COCO instance-segmentation ZIP.
 
@@ -127,6 +128,9 @@ def export_coco(
     plus derived bbox/area. `bbox`-only annotations are exported as bbox+area
     with a single rectangle segmentation (so tools that require segmentation
     still work).
+
+    Pass `?review_status=approved` to ship only reviewer-approved images
+    (recommended for production exports).
     """
     p = _check(session, project_id, user)
     d = session.get(Dataset, dataset_id)
@@ -136,13 +140,13 @@ def export_coco(
     classes = list(session.exec(select(Class).where(Class.project_id == project_id)).all())
     cls_id_to_idx = {c.id: i + 1 for i, c in enumerate(classes)}
 
-    images = list(
-        session.exec(
-            select(Image)
-            .where(Image.dataset_id == dataset_id, Image.status == ImageStatus.READY)
-            .order_by(Image.uploaded_at)
-        ).all()
+    img_q = (
+        select(Image)
+        .where(Image.dataset_id == dataset_id, Image.status == ImageStatus.READY)
     )
+    if review_status:
+        img_q = img_q.where(Image.review_status == review_status)
+    images = list(session.exec(img_q.order_by(Image.uploaded_at)).all())
     img_id_to_idx = {im.id: i + 1 for i, im in enumerate(images)}
     img_ids = [im.id for im in images]
 

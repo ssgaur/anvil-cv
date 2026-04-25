@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, downloadCocoExport, fileUrl } from "../lib/api";
-import type { Dataset, ImageRow } from "../types";
+import type { Dataset, ImageRow, ReviewStatus } from "../types";
 
 export function DatasetDetailPage() {
   const { projectId = "", datasetId = "" } = useParams();
@@ -13,6 +13,7 @@ export function DatasetDetailPage() {
   const cocoInput = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [filter, setFilter] = useState<"all" | "ready" | "uploaded" | "embedding" | "failed">("all");
+  const [reviewFilter, setReviewFilter] = useState<"all" | ReviewStatus>("all");
 
   const reload = useCallback(async () => {
     const [d, imgs] = await Promise.all([
@@ -75,12 +76,22 @@ export function DatasetDetailPage() {
     upload(files);
   }
 
-  const filtered = filter === "all" ? images : images.filter((i) => i.status === filter);
+  const filtered = images
+    .filter((i) => filter === "all" || i.status === filter)
+    .filter((i) => reviewFilter === "all" || i.review_status === reviewFilter);
   const counts = {
     all: images.length,
     ready: images.filter((i) => i.status === "ready").length,
     embedding: images.filter((i) => i.status === "embedding" || i.status === "uploaded").length,
     failed: images.filter((i) => i.status === "failed").length,
+  };
+  const reviewCounts: Record<"all" | ReviewStatus, number> = {
+    all: images.length,
+    new: images.filter((i) => i.review_status === "new").length,
+    in_progress: images.filter((i) => i.review_status === "in_progress").length,
+    submitted: images.filter((i) => i.review_status === "submitted").length,
+    approved: images.filter((i) => i.review_status === "approved").length,
+    rejected: images.filter((i) => i.review_status === "rejected").length,
   };
 
   if (!dataset) return <div className="p-8 text-neutral-500">loading…</div>;
@@ -136,16 +147,20 @@ export function DatasetDetailPage() {
             <button
               onClick={async () => {
                 try {
-                  await downloadCocoExport(projectId, datasetId, `${dataset.slug}-coco.zip`);
+                  const opts = reviewFilter !== "all" ? { review_status: reviewFilter } : undefined;
+                  const suffix = reviewFilter !== "all" ? `-${reviewFilter}` : "";
+                  await downloadCocoExport(projectId, datasetId, `${dataset.slug}${suffix}-coco.zip`, opts);
                 } catch (e) {
                   alert(e instanceof Error ? e.message : "export failed");
                 }
               }}
               disabled={counts.ready === 0}
-              title="Download annotations.json (COCO format) + images as a ZIP"
+              title={reviewFilter === "all"
+                ? "Download annotations.json (COCO format) + images as a ZIP"
+                : `Export only images with review status: ${reviewFilter}`}
               className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-100 font-medium px-4 py-2 rounded text-sm border border-neutral-700"
             >
-              Export COCO
+              Export COCO{reviewFilter !== "all" ? ` (${reviewFilter})` : ""}
             </button>
             <button
               onClick={() => fileInput.current?.click()}
@@ -169,6 +184,32 @@ export function DatasetDetailPage() {
               {f} <span className="ml-1 text-neutral-500">{counts[f as keyof typeof counts] ?? counts.all}</span>
             </button>
           ))}
+        </div>
+
+        <div className="mt-2 flex gap-1 items-center">
+          <span className="text-[10px] uppercase tracking-wider text-neutral-600 mr-1">Review</span>
+          {(["all", "new", "in_progress", "submitted", "approved", "rejected"] as const).map((f) => {
+            const labels: Record<typeof f, string> = {
+              all: "all", new: "new", in_progress: "in progress",
+              submitted: "submitted", approved: "approved", rejected: "rejected",
+            };
+            const active = reviewFilter === f;
+            const ringColor = {
+              all: "", new: "", in_progress: "ring-blue-500",
+              submitted: "ring-amber-500", approved: "ring-emerald-500", rejected: "ring-rose-500",
+            }[f];
+            return (
+              <button
+                key={f}
+                onClick={() => setReviewFilter(f)}
+                className={`px-3 py-1 text-xs rounded ${
+                  active ? `bg-neutral-700 text-neutral-100 ring-1 ${ringColor}` : "bg-neutral-900 text-neutral-400 hover:text-neutral-200"
+                }`}
+              >
+                {labels[f]} <span className="ml-1 text-neutral-500">{reviewCounts[f]}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -197,6 +238,14 @@ function ImageCard({ img, projectId, datasetId }: { img: ImageRow; projectId: st
     failed: "bg-rose-500",
   }[img.status];
 
+  const reviewDot: Record<ReviewStatus, string> = {
+    new: "bg-neutral-500",
+    in_progress: "bg-blue-400",
+    submitted: "bg-amber-400",
+    approved: "bg-emerald-400",
+    rejected: "bg-rose-400",
+  };
+
   return (
     <Link
       to={`/projects/${projectId}/datasets/${datasetId}/workview/${img.id}`}
@@ -209,6 +258,16 @@ function ImageCard({ img, projectId, datasetId }: { img: ImageRow; projectId: st
           <div className="w-full h-full grid place-items-center text-neutral-700 text-xs">no preview</div>
         )}
         <div className={`absolute top-2 right-2 w-2.5 h-2.5 rounded-full ${statusColor}`} title={img.status} />
+        <div
+          className={`absolute top-2 left-2 w-2.5 h-2.5 rounded-full ${reviewDot[img.review_status]}`}
+          title={`Review: ${img.review_status.replace("_", " ")}${img.review_reason ? ` — ${img.review_reason}` : ""}`}
+        />
+        {img.open_comment_count > 0 && (
+          <div
+            className="absolute top-2 left-7 bg-pink-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+            title={`${img.open_comment_count} open comment(s)`}
+          >💬 {img.open_comment_count}</div>
+        )}
         {img.annotation_count > 0 && (
           <div className="absolute bottom-2 left-2 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded">
             {img.annotation_count}

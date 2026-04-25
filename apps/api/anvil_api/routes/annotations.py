@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
 from anvil_api.auth import CurrentUser, SessionDep
-from anvil_api.models import Annotation, Class, ClassProperty, ClassPropertyType, Dataset, Image, Project
+from anvil_api.models import Annotation, Class, ClassProperty, ClassPropertyType, Dataset, Image, Project, ReviewStatus
 from anvil_api.schemas import AnnotationIn, AnnotationOut, AnnotationPatch
 
 router = APIRouter(tags=["annotations"])
@@ -103,6 +103,10 @@ def create_annotation(
         created_by=user.id,
     )
     session.add(a)
+    # First annotation on a NEW image bumps it to in_progress
+    if img.review_status == ReviewStatus.NEW:
+        img.review_status = ReviewStatus.IN_PROGRESS
+        session.add(img)
     session.commit()
     session.refresh(a)
     return _to_out(a)

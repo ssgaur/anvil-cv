@@ -20,8 +20,18 @@ from sqlmodel import Session, func, select
 from anvil_api.auth import CurrentUser, SessionDep
 from anvil_api.db import engine
 from anvil_api.ml_client import ml_client
-from anvil_api.models import Annotation, Dataset, Image, ImageStatus, ModelVersion, ModelVersionStatus, Project
-from anvil_api.schemas import ImageOut, PredictIn, PredictOut
+from anvil_api.models import (
+    Annotation,
+    Comment,
+    Dataset,
+    Image,
+    ImageStatus,
+    ModelVersion,
+    ModelVersionStatus,
+    Project,
+    ReviewStatus,
+)
+from anvil_api.schemas import ImageOut, PredictIn, PredictOut, ReviewActionIn
 from anvil_api.storage import storage
 
 router = APIRouter(tags=["images"])
@@ -41,6 +51,13 @@ def _to_out(session: Session, img: Image) -> ImageOut:
     ann_count = session.exec(
         select(func.count()).select_from(Annotation).where(Annotation.image_id == img.id)
     ).one()
+    cmt_total = session.exec(
+        select(func.count()).select_from(Comment).where(Comment.image_id == img.id)
+    ).one()
+    cmt_open = session.exec(
+        select(func.count()).select_from(Comment)
+        .where(Comment.image_id == img.id, Comment.resolved == False)  # noqa: E712
+    ).one()
     return ImageOut(
         id=img.id,
         dataset_id=img.dataset_id,
@@ -54,6 +71,12 @@ def _to_out(session: Session, img: Image) -> ImageOut:
         image_url=storage.signed_url(img.storage_key),
         uncertainty=img.uncertainty,
         annotation_count=ann_count,
+        review_status=img.review_status,
+        submitted_at=img.submitted_at,
+        reviewed_at=img.reviewed_at,
+        review_reason=img.review_reason,
+        comment_count=cmt_total,
+        open_comment_count=cmt_open,
     )
 
 
@@ -159,6 +182,7 @@ async def _embed_async(image_id: UUID) -> None:
 def list_images(
     project_id: UUID, dataset_id: UUID, session: SessionDep, user: CurrentUser,
     status_filter: ImageStatus | None = None,
+    review_status: ReviewStatus | None = None,
     limit: int = 200,
     offset: int = 0,
 ) -> list[ImageOut]:
@@ -166,6 +190,8 @@ def list_images(
     q = select(Image).where(Image.dataset_id == dataset_id)
     if status_filter:
         q = q.where(Image.status == status_filter)
+    if review_status:
+        q = q.where(Image.review_status == review_status)
     q = q.order_by(Image.uploaded_at).offset(offset).limit(limit)
     return [_to_out(session, i) for i in session.exec(q).all()]
 
@@ -181,6 +207,85 @@ def get_image(image_id: UUID, session: SessionDep, user: CurrentUser) -> ImageOu
     if not p or p.owner_id != user.id:
         raise HTTPException(404, "image not found")
     return _to_out(session, img)
+
+
+# --------- Review flow (submit / approve / reject / reopen) ---------
+def _check_image_owner(session: Session, image_id: UUID, user) -> Image:
+    img = session.get(Image, image_id)
+    if not img:
+        raise HTTPException(404, "image not found")
+    d = session.get(Dataset, img.dataset_id)
+    p = session.get(Project, d.project_id) if d else None
+    if not p or p.owner_id != user.id:
+        raise HTTPException(404, "image not found")
+    return img
+
+
+@router.patch("/images/{image_id}/review", response_model=ImageOut)
+def review_action(
+    image_id: UUID, body: ReviewActionIn, session: SessionDep, user: CurrentUser,
+) -> ImageOut:
+    """Drive the review state machine.
+
+    Valid transitions:
+      submit:  new | in_progress | rejected → submitted
+      approve: submitted                    → approved
+      reject:  submitted                    → rejected (reason required, attached as comment)
+      reopen:  approved | rejected          → in_progress
+    """
+    img = _check_image_owner(session, image_id, user)
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    action = (body.action or "").strip().lower()
+
+    if action == "submit":
+        if img.review_status not in (ReviewStatus.NEW, ReviewStatus.IN_PROGRESS, ReviewStatus.REJECTED):
+            raise HTTPException(409, f"cannot submit from {img.review_status}")
+        # Require at least one annotation before submitting
+        n_ann = session.exec(
+            select(func.count()).select_from(Annotation).where(Annotation.image_id == img.id)
+        ).one()
+        if n_ann == 0:
+            raise HTTPException(400, "annotate at least one object before submitting for review")
+        img.review_status = ReviewStatus.SUBMITTED
+        img.submitted_at = now
+        img.submitted_by = user.id
+    elif action == "approve":
+        if img.review_status != ReviewStatus.SUBMITTED:
+            raise HTTPException(409, f"can only approve a submitted image (currently {img.review_status})")
+        img.review_status = ReviewStatus.APPROVED
+        img.reviewed_at = now
+        img.reviewed_by = user.id
+        img.review_reason = None
+    elif action == "reject":
+        if img.review_status != ReviewStatus.SUBMITTED:
+            raise HTTPException(409, f"can only reject a submitted image (currently {img.review_status})")
+        if not body.reason or not body.reason.strip():
+            raise HTTPException(400, "reject requires a reason")
+        img.review_status = ReviewStatus.REJECTED
+        img.reviewed_at = now
+        img.reviewed_by = user.id
+        img.review_reason = body.reason.strip()
+        # Attach the reason as a general comment for visibility
+        session.add(Comment(
+            image_id=img.id, author_id=user.id,
+            body=f"[Reject] {body.reason.strip()}",
+            x=None, y=None, resolved=False,
+        ))
+    elif action == "reopen":
+        if img.review_status not in (ReviewStatus.APPROVED, ReviewStatus.REJECTED):
+            raise HTTPException(409, f"cannot reopen from {img.review_status}")
+        img.review_status = ReviewStatus.IN_PROGRESS
+        img.reviewed_at = None
+        img.reviewed_by = None
+        img.review_reason = None
+    else:
+        raise HTTPException(400, f"unknown action: {action!r}")
+    session.add(img)
+    session.commit()
+    session.refresh(img)
+    return _to_out(session, img)
+
 
 
 # --------- File serving (local provider only) ---------

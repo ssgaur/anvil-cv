@@ -13,6 +13,7 @@ from anvil_api.models import (
     GeometryType,
     ImageStatus,
     ModelVersionStatus,
+    ReviewStatus,
 )
 
 
@@ -86,6 +87,41 @@ class ImageOut(BaseModel):
     image_url: str
     uncertainty: float | None
     annotation_count: int = 0
+    review_status: ReviewStatus = ReviewStatus.NEW
+    submitted_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    review_reason: str | None = None
+    comment_count: int = 0
+    open_comment_count: int = 0
+
+
+class ReviewActionIn(BaseModel):
+    action: str  # "submit" | "approve" | "reject" | "reopen"
+    reason: str | None = None  # required for reject; auto-attached as a general comment
+
+
+# ---- Comments
+class CommentIn(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    x: float | None = None
+    y: float | None = None
+
+
+class CommentPatch(BaseModel):
+    body: str | None = Field(default=None, min_length=1, max_length=4000)
+    resolved: bool | None = None
+
+
+class CommentOut(BaseModel):
+    id: UUID
+    image_id: UUID
+    author_id: UUID
+    author_name: str
+    body: str
+    x: float | None
+    y: float | None
+    resolved: bool
+    created_at: datetime
 
 
 # ---- Classes

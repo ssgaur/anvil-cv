@@ -1,5 +1,5 @@
 import type {
-  Annotation, ClassProperty, ClassPropertyType, ClassRow, Dataset, ImageRow, ModelVersion, PredictResponse, Project, User,
+  Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, Dataset, ImageRow, ModelVersion, PredictResponse, Project, ReviewStatus, User,
 } from "../types";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -47,9 +47,13 @@ export function fileUrl(rel: string | null | undefined): string {
   return `${API}${rel}`;
 }
 
-export async function downloadCocoExport(projectId: string, datasetId: string, filename: string) {
+export async function downloadCocoExport(
+  projectId: string, datasetId: string, filename: string,
+  opts?: { review_status?: string },
+) {
   const t = token();
-  const r = await fetch(`${API}/api/projects/${projectId}/datasets/${datasetId}/export/coco`, {
+  const qs = opts?.review_status ? `?review_status=${encodeURIComponent(opts.review_status)}` : "";
+  const r = await fetch(`${API}/api/projects/${projectId}/datasets/${datasetId}/export/coco${qs}`, {
     headers: t ? { Authorization: `Bearer ${t}` } : undefined,
   });
   if (!r.ok) throw new Error(`export failed: ${r.status} ${r.statusText}`);
@@ -107,10 +111,11 @@ export const api = {
   // Images
   listImages: (
     projectId: string, datasetId: string,
-    opts?: { status?: string; limit?: number; offset?: number },
+    opts?: { status?: string; review_status?: ReviewStatus; limit?: number; offset?: number },
   ) => {
     const q = new URLSearchParams();
     if (opts?.status) q.set("status_filter", opts.status);
+    if (opts?.review_status) q.set("review_status", opts.review_status);
     if (opts?.limit) q.set("limit", String(opts.limit));
     if (opts?.offset) q.set("offset", String(opts.offset));
     const qs = q.toString();
@@ -127,6 +132,26 @@ export const api = {
     );
   },
   getImage: (id: string) => req<ImageRow>(`/api/images/${id}`),
+
+  // Review flow
+  reviewAction: (id: string, body: { action: "submit" | "approve" | "reject" | "reopen"; reason?: string }) =>
+    req<ImageRow>(`/api/images/${id}/review`, {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
+
+  // Comments (spatial pins + general)
+  listComments: (imageId: string) =>
+    req<CommentRow[]>(`/api/images/${imageId}/comments`),
+  createComment: (imageId: string, body: { body: string; x?: number | null; y?: number | null }) =>
+    req<CommentRow>(`/api/images/${imageId}/comments`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  patchComment: (id: string, body: { body?: string; resolved?: boolean }) =>
+    req<CommentRow>(`/api/comments/${id}`, {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
+  deleteComment: (id: string) =>
+    req<void>(`/api/comments/${id}`, { method: "DELETE" }),
 
   importCocoZip: (projectId: string, datasetId: string, file: File) => {
     const fd = new FormData();

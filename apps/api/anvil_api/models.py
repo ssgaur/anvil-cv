@@ -43,6 +43,16 @@ class ModelVersionStatus(str, Enum):
     FAILED = "failed"
 
 
+class ReviewStatus(str, Enum):
+    """Per-image labeling lifecycle (V7-style)."""
+
+    NEW = "new"
+    IN_PROGRESS = "in_progress"
+    SUBMITTED = "submitted"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class ClassPropertyType(str, Enum):
     """How a per-class attribute is captured for each annotation.
 
@@ -113,10 +123,17 @@ class Image(SQLModel, table=True):
     status: ImageStatus = Field(default=ImageStatus.UPLOADED, index=True)
     error: str | None = None
     uncertainty: float | None = Field(default=None, index=True)  # for active learning
+    review_status: ReviewStatus = Field(default=ReviewStatus.NEW, index=True)
+    submitted_at: datetime | None = None
+    submitted_by: UUID | None = Field(default=None, foreign_key="users.id")
+    reviewed_at: datetime | None = None
+    reviewed_by: UUID | None = Field(default=None, foreign_key="users.id")
+    review_reason: str | None = None  # last reject reason (if any)
     uploaded_at: datetime = Field(default_factory=utcnow)
 
     dataset: Dataset = Relationship(back_populates="images")
     annotations: list["Annotation"] = Relationship(sa_relationship_kwargs={"cascade": "all, delete"})
+    comments: list["Comment"] = Relationship(sa_relationship_kwargs={"cascade": "all, delete"})
 
 
 class Class(SQLModel, table=True):
@@ -188,4 +205,21 @@ class ClassProperty(SQLModel, table=True):
     options: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     required: bool = Field(default=False)
     sort_order: int = Field(default=0, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Comment(SQLModel, table=True):
+    """Spatial or general comment pinned on an image (review threads)."""
+
+    __tablename__ = "comments"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    image_id: UUID = Field(foreign_key="images.id", index=True)
+    author_id: UUID = Field(foreign_key="users.id", index=True)
+    body: str = Field(max_length=4000)
+    # If x or y is None → "general" comment (no pin on canvas).
+    # Coordinates are in image pixels.
+    x: float | None = None
+    y: float | None = None
+    resolved: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=utcnow)

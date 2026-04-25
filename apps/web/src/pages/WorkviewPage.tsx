@@ -4,9 +4,9 @@ import { Circle, Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
 import Konva from "konva";
 import { extractLargestPolygon } from "../lib/brush";
 import { api, fileUrl } from "../lib/api";
-import type { Annotation, ClassProperty, ClassRow, ImageRow, ModelVersion } from "../types";
+import type { Annotation, ClassProperty, ClassRow, CommentRow, ImageRow, ModelVersion } from "../types";
 
-type Tool = "pan" | "auto" | "polygon" | "bbox" | "brush";
+type Tool = "pan" | "auto" | "polygon" | "bbox" | "brush" | "comment";
 
 export function WorkviewPage() {
   const { projectId = "", datasetId = "", imageId = "" } = useParams();
@@ -51,6 +51,13 @@ export function WorkviewPage() {
 
   // Cache of class properties per class id, lazy-loaded when an annotation is selected
   const [classPropsCache, setClassPropsCache] = useState<Record<string, ClassProperty[]>>({});
+
+  // Review-flow comments
+  const [comments, setComments] = useState<CommentRow[]>([]);
+  const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null);
+  // Pending pin (clicked with comment tool, awaiting body text)
+  const [pendingPin, setPendingPin] = useState<{ x: number; y: number } | null>(null);
+  const [pendingBody, setPendingBody] = useState("");
 
   // ---- Brush tool
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -263,12 +270,13 @@ export function WorkviewPage() {
 
   // ---- Data load
   const loadAll = useCallback(async () => {
-    const [img, cs, ann] = await Promise.all([
+    const [img, cs, ann, cmts] = await Promise.all([
       api.getImage(imageId),
       api.listClasses(projectId),
       api.listAnnotations(imageId),
+      api.listComments(imageId),
     ]);
-    setImage(img); setClasses(cs); setAnnotations(ann);
+    setImage(img); setClasses(cs); setAnnotations(ann); setComments(cmts);
     if (cs.length && !activeClassId) setActiveClassId(cs[0].id);
   }, [imageId, projectId, activeClassId]);
 
@@ -281,6 +289,7 @@ export function WorkviewPage() {
     setUndoStack([]); setRedoStack([]);
     clearPrompts();
     setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
+    setPendingPin(null); setPendingBody("");
     // Drop the brush canvas so the next image starts fresh.
     maskCanvasRef.current = null;
     setHasBrushStrokes(false);
@@ -420,6 +429,7 @@ export function WorkviewPage() {
       else if (e.key === "p") setTool("polygon");
       else if (e.key === "b") setTool("bbox");
       else if (e.key === "r") setTool("brush");
+      else if (e.key === "t") setTool("comment");
       else if (e.key === "Escape") {
         if (showHelp) { setShowHelp(false); return; }
         setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
@@ -552,6 +562,9 @@ export function WorkviewPage() {
       }
     } else if (tool === "polygon") {
       setPolyPoints([...polyPoints, [ix, iy]]);
+    } else if (tool === "comment") {
+      setPendingPin({ x: Math.round(ix), y: Math.round(iy) });
+      setPendingBody("");
     }
   }
 
@@ -851,6 +864,7 @@ export function WorkviewPage() {
             ↷ Redo
           </button>
         </div>
+        <ReviewControls image={image} onReload={loadAll} />
         <ModelPicker
           models={models}
           activeModelId={activeModelId}
@@ -876,6 +890,8 @@ export function WorkviewPage() {
           <ToolBtn active={tool === "polygon"} onClick={() => setTool("polygon")} label="Polygon (P)" icon="⬡" />
           <ToolBtn active={tool === "bbox"} onClick={() => setTool("bbox")} label="Bounding Box (B)" icon="▭" />
           <ToolBtn active={tool === "brush"} onClick={() => setTool("brush")} label="Brush (R) — paint a mask, shift to erase, [ / ] resize, Enter to commit" icon="🖌" />
+          <div className="h-px w-8 bg-neutral-800 my-1" />
+          <ToolBtn active={tool === "comment"} onClick={() => setTool("comment")} label="Comment (T) — click on image to drop a pin and leave a note for the reviewer" icon="💬" />
         </div>
 
         {/* Canvas */}
@@ -893,6 +909,17 @@ export function WorkviewPage() {
           {image && image.status !== "ready" && tool === "auto" && (
             <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-amber-500 text-neutral-950 text-xs px-3 py-1 rounded z-10">
               Embedding… auto-annotate ready in a moment
+            </div>
+          )}
+
+          {image?.review_status === "rejected" && image.review_reason && (
+            <div className="absolute top-3 left-3 bg-rose-900/80 border border-rose-700 text-rose-100 text-xs px-3 py-2 rounded z-10 max-w-md">
+              <span className="font-semibold mr-1">Reviewer rejected:</span>{image.review_reason}
+            </div>
+          )}
+          {image?.review_status === "approved" && (
+            <div className="absolute top-3 left-3 bg-emerald-900/70 border border-emerald-700 text-emerald-100 text-[11px] px-2.5 py-1 rounded z-10">
+              ✓ Approved — read-only. Use Reopen to edit.
             </div>
           )}
 
@@ -1155,8 +1182,66 @@ export function WorkviewPage() {
                   dash={[6 / view.scale, 4 / view.scale]}
                 />
               )}
+              {/* Comment pins (existing) */}
+              {comments.filter((c) => c.x != null && c.y != null).map((c) => {
+                const isHovered = hoveredCommentId === c.id;
+                const r = (isHovered ? 10 : 7) / view.scale;
+                return (
+                  <Circle
+                    key={`pin-${c.id}`}
+                    x={c.x as number}
+                    y={c.y as number}
+                    radius={r}
+                    fill={c.resolved ? "#6b7280" : "#ec4899"}
+                    stroke="#0a0a0a"
+                    strokeWidth={2 / view.scale}
+                    onMouseEnter={() => setHoveredCommentId(c.id)}
+                    onMouseLeave={() => setHoveredCommentId((h) => (h === c.id ? null : h))}
+                  />
+                );
+              })}
+              {/* Pending pin (about to add) */}
+              {pendingPin && (
+                <Circle
+                  x={pendingPin.x}
+                  y={pendingPin.y}
+                  radius={9 / view.scale}
+                  fill="#fbbf24"
+                  stroke="#0a0a0a"
+                  strokeWidth={2 / view.scale}
+                />
+              )}
             </Layer>
           </Stage>
+
+          {/* Pending comment composer */}
+          {pendingPin && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg p-2 flex gap-2 items-center text-sm shadow-xl z-10">
+              <span className="text-amber-400 px-2 text-xs">📍 ({pendingPin.x},{pendingPin.y})</span>
+              <input
+                autoFocus
+                value={pendingBody}
+                onChange={(e) => setPendingBody(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === "Escape") { setPendingPin(null); setPendingBody(""); }
+                  else if (e.key === "Enter" && pendingBody.trim()) {
+                    try {
+                      await api.createComment(imageId, { body: pendingBody.trim(), x: pendingPin.x, y: pendingPin.y });
+                      setPendingPin(null); setPendingBody("");
+                      setComments(await api.listComments(imageId));
+                    } catch (err) { setError((err as Error).message); }
+                  }
+                }}
+                placeholder="Type comment, Enter to save…"
+                className="bg-neutral-800 px-3 py-1 rounded text-sm w-72 outline-none focus:ring-1 focus:ring-amber-500"
+              />
+              <button
+                onClick={() => { setPendingPin(null); setPendingBody(""); }}
+                className="text-neutral-500 hover:text-neutral-200 px-2"
+                title="Cancel (Esc)"
+              >×</button>
+            </div>
+          )}
 
           {/* Pending action bar */}
           {pending && (
@@ -1369,8 +1454,17 @@ export function WorkviewPage() {
             )}
           </div>
 
+          <CommentPanel
+            imageId={imageId}
+            comments={comments}
+            onChange={(cs) => setComments(cs)}
+            currentUserId={null}
+            hoveredCommentId={hoveredCommentId}
+            setHoveredCommentId={setHoveredCommentId}
+          />
+
           <div className="p-3 border-t border-neutral-800 text-[11px] text-neutral-500 space-y-1">
-            <div><kbd className="kbd">V</kbd> pan · <kbd className="kbd">A</kbd> auto · <kbd className="kbd">P</kbd> polygon · <kbd className="kbd">B</kbd> bbox</div>
+            <div><kbd className="kbd">V</kbd> pan · <kbd className="kbd">A</kbd> auto · <kbd className="kbd">P</kbd> polygon · <kbd className="kbd">B</kbd> bbox · <kbd className="kbd">R</kbd> brush · <kbd className="kbd">T</kbd> comment</div>
             <div><kbd className="kbd">Enter</kbd> save · <kbd className="kbd">Esc</kbd> cancel · <kbd className="kbd">←/→</kbd> navigate</div>
             <div><kbd className="kbd">Wheel</kbd> zoom (toward cursor)</div>
           </div>
@@ -1637,6 +1731,182 @@ function PropertyControl({
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         }}
       />
+    </div>
+  );
+}
+
+// ---------------- Review controls (top bar) ----------------
+
+const REVIEW_STYLES: Record<string, { label: string; bg: string; fg: string; dot: string }> = {
+  new:           { label: "New",         bg: "bg-neutral-800", fg: "text-neutral-300", dot: "bg-neutral-500" },
+  in_progress:   { label: "In progress", bg: "bg-blue-900/40", fg: "text-blue-300",    dot: "bg-blue-400" },
+  submitted:     { label: "Submitted",   bg: "bg-amber-900/40",fg: "text-amber-300",   dot: "bg-amber-400" },
+  approved:      { label: "Approved",    bg: "bg-emerald-900/40", fg: "text-emerald-300", dot: "bg-emerald-400" },
+  rejected:      { label: "Rejected",    bg: "bg-rose-900/40", fg: "text-rose-300",    dot: "bg-rose-400" },
+};
+
+function ReviewControls({ image, onReload }: { image: ImageRow | null; onReload: () => void | Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  if (!image) return null;
+  const st = REVIEW_STYLES[image.review_status] ?? REVIEW_STYLES.new;
+
+  async function act(action: "submit" | "approve" | "reject" | "reopen") {
+    let reason: string | undefined = undefined;
+    if (action === "reject") {
+      const r = window.prompt("Reject reason (required):");
+      if (!r || !r.trim()) return;
+      reason = r.trim();
+    }
+    setBusy(true);
+    try {
+      await api.reviewAction(image!.id, { action, reason });
+      await onReload();
+    } catch (e) {
+      window.alert(`Review action failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const status = image.review_status;
+  return (
+    <div className="flex items-center gap-1">
+      <span
+        title={image.review_reason ? `Reason: ${image.review_reason}` : undefined}
+        className={`text-[11px] px-2 py-1 rounded-full inline-flex items-center gap-1.5 ${st.bg} ${st.fg}`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
+        {st.label}
+      </span>
+      {(status === "new" || status === "in_progress" || status === "rejected") && (
+        <button
+          onClick={() => act("submit")} disabled={busy}
+          className="text-xs bg-amber-500 hover:bg-amber-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
+          title="Submit for review"
+        >Submit ▸</button>
+      )}
+      {status === "submitted" && (
+        <>
+          <button
+            onClick={() => act("approve")} disabled={busy}
+            className="text-xs bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
+          >✓ Approve</button>
+          <button
+            onClick={() => act("reject")} disabled={busy}
+            className="text-xs bg-rose-500 hover:bg-rose-400 disabled:bg-neutral-700 text-white font-medium px-3 py-1 rounded"
+          >✕ Reject</button>
+        </>
+      )}
+      {(status === "approved" || status === "rejected") && (
+        <button
+          onClick={() => act("reopen")} disabled={busy}
+          className="text-xs bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 text-neutral-100 px-3 py-1 rounded"
+          title="Reopen for editing"
+        >↺ Reopen</button>
+      )}
+    </div>
+  );
+}
+
+// ---------------- Comments panel (right sidebar) ----------------
+
+function CommentPanel({
+  imageId, comments, onChange, hoveredCommentId, setHoveredCommentId,
+}: {
+  imageId: string;
+  comments: CommentRow[];
+  onChange: (cs: CommentRow[]) => void;
+  currentUserId: string | null;
+  hoveredCommentId: string | null;
+  setHoveredCommentId: (id: string | null) => void;
+}) {
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function refresh() { onChange(await api.listComments(imageId)); }
+
+  async function addGeneral() {
+    const t = body.trim(); if (!t) return;
+    setBusy(true);
+    try {
+      await api.createComment(imageId, { body: t, x: null, y: null });
+      setBody(""); await refresh();
+    } catch (e) { window.alert((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleResolved(c: CommentRow) {
+    try { await api.patchComment(c.id, { resolved: !c.resolved }); await refresh(); }
+    catch (e) { window.alert((e as Error).message); }
+  }
+
+  async function del(c: CommentRow) {
+    if (!window.confirm("Delete this comment?")) return;
+    try { await api.deleteComment(c.id); await refresh(); }
+    catch (e) { window.alert((e as Error).message); }
+  }
+
+  const open = comments.filter((c) => !c.resolved);
+  const resolved = comments.filter((c) => c.resolved);
+
+  return (
+    <div className="border-b border-neutral-800 p-3 max-h-72 overflow-y-auto">
+      <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2 flex items-center justify-between">
+        <span>Comments</span>
+        <span className="text-[10px] normal-case tracking-normal text-neutral-600">
+          {open.length} open · {resolved.length} resolved
+        </span>
+      </div>
+      <div className="flex gap-1 mb-2">
+        <input
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") addGeneral(); }}
+          placeholder="Add a note (or use 💬 tool to pin)…"
+          className="flex-1 bg-neutral-800 px-2 py-1 rounded text-xs outline-none focus:ring-1 focus:ring-emerald-500"
+          disabled={busy}
+        />
+        <button
+          onClick={addGeneral}
+          disabled={busy || !body.trim()}
+          className="text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white px-2 rounded"
+        >+</button>
+      </div>
+      {comments.length === 0 ? (
+        <div className="text-[11px] text-neutral-600 italic">No comments yet.</div>
+      ) : (
+        <ul className="space-y-1.5">
+          {comments.map((c) => (
+            <li
+              key={c.id}
+              onMouseEnter={() => setHoveredCommentId(c.id)}
+              onMouseLeave={() => setHoveredCommentId(hoveredCommentId === c.id ? null : hoveredCommentId)}
+              className={`group rounded px-2 py-1.5 text-xs ${c.resolved ? "bg-neutral-900 text-neutral-500" : "bg-neutral-800 text-neutral-200"} ${hoveredCommentId === c.id ? "ring-1 ring-pink-500" : ""}`}
+            >
+              <div className="flex items-start gap-1">
+                <span className="text-[10px] mt-0.5">{c.x != null ? "📍" : "💬"}</span>
+                <div className="flex-1 min-w-0">
+                  <div className={c.resolved ? "line-through" : ""}>{c.body}</div>
+                  <div className="text-[10px] text-neutral-600 mt-0.5">
+                    {c.author_name} · {new Date(c.created_at).toLocaleString()}
+                    {c.x != null && <> · ({c.x},{c.y})</>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleResolved(c)}
+                  title={c.resolved ? "Reopen" : "Mark resolved"}
+                  className="text-neutral-500 hover:text-emerald-400 opacity-0 group-hover:opacity-100"
+                >{c.resolved ? "↺" : "✓"}</button>
+                <button
+                  onClick={() => del(c)}
+                  title="Delete"
+                  className="text-neutral-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+                >✕</button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

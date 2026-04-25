@@ -63,6 +63,12 @@ export interface ImageRow {
   image_url: string;
   uncertainty: number | null;
   annotation_count: number;
+  review_status: ReviewStatus;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  review_reason: string | null;
+  comment_count: number;
+  open_comment_count: number;
 }
 
 export type GeometryType = "polygon" | "bbox" | "brush";
@@ -90,6 +96,20 @@ export interface ClassRow {
 }
 
 export type AnnotationSource = "manual" | "model" | "imported";
+
+export type ReviewStatus = "new" | "in_progress" | "submitted" | "approved" | "rejected";
+
+export interface CommentRow {
+  id: string;
+  image_id: string;
+  author_id: string;
+  author_name: string;
+  body: string;
+  x: number | null;
+  y: number | null;
+  resolved: boolean;
+  created_at: string;
+}
 
 export interface Annotation {
   id: string;
