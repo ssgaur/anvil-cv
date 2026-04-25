@@ -6,7 +6,7 @@ This is the **3-process recipe** the maintainer uses on M1 macOS. It's the faste
 
 - macOS (M1/M2/M3) — Linux works too with minor changes
 - Python 3.11
-- Node 20 + npm
+- Node 20 + pnpm 9 (`corepack enable` then `corepack prepare pnpm@9.12.3 --activate`)
 - Postgres 15+ (Homebrew: `brew install postgresql@15 && brew services start postgresql@15`)
 - Redis (only if you want the worker; optional in dev)
 - ~10 GB disk (SAM2 base checkpoint is ~700 MB)
@@ -28,7 +28,7 @@ pip install -U pip uv
 uv sync # installs api, ml, worker, storage deps
 
 # 4. Web deps
-cd apps/web && npm install && cd ../..
+cd apps/web && pnpm install --frozen-lockfile && cd ../..
 
 # 5. SAM2 checkpoint
 mkdir -p checkpoints
@@ -62,7 +62,7 @@ lsof -ti:8000 -ti:8001 -ti:5173 | xargs kill 2>/dev/null
 (cd apps/api && PYTHONPATH=$PWD nohup python -m uvicorn anvil_api.main:app --host 127.0.0.1 --port 8000 </dev/null > ~/PersonalDev/anvil-cv/logs/api.log 2>&1 & disown)
 
 # Web
-(cd apps/web && nohup npm run dev </dev/null > ~/PersonalDev/anvil-cv/logs/web.log 2>&1 & disown)
+(cd apps/web && nohup pnpm dev </dev/null > ~/PersonalDev/anvil-cv/logs/web.log 2>&1 & disown)
 
 # Watch
 tail -f logs/*.log
@@ -86,7 +86,7 @@ ruff check .
 mypy apps/api/anvil_api apps/ml/anvil_ml || true # mypy is lenient
 
 # Web
-cd apps/web && npm run typecheck && npm run lint
+cd apps/web && pnpm typecheck && pnpm lint
 
 # E2E (services must be running)
 python scripts/e2e_smoketest.py

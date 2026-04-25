@@ -63,6 +63,7 @@ anvil-cv/
 │ └── storage/ Pluggable storage (Local / S3 / MinIO / Azure / GCS)
 ├── docs/ Architecture, features, fine-tune deep-dive, API ref, FAQ
 ├── scripts/ E2E smoke tests (one per major feature)
+├── vendor/sam2/ Vendored SAM2 (Apache 2.0; see vendor/sam2/UPSTREAM.md)
 └── .github/ Copilot CLI onboarding + CI workflows + issue templates
 ```
 

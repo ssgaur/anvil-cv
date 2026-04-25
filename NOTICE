@@ -1,0 +1,13 @@
+Anvil
+Copyright (c) 2025 Anvil contributors
+
+This product includes software developed by third parties.
+
+------------------------------------------------------------
+SAM 2: Segment Anything in Images and Videos
+Source: https://github.com/facebookresearch/sam2
+Copyright (c) Meta Platforms, Inc. and affiliates.
+License: Apache License, Version 2.0
+Vendored under: vendor/sam2/
+Original LICENSE preserved at: vendor/sam2/LICENSE
+------------------------------------------------------------

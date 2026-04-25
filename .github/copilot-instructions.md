@@ -74,7 +74,7 @@ set -a && source .env && set +a
 # ML first (api depends on it being up)
 (cd apps/ml && PYTHONPATH=$PWD nohup python -m uvicorn anvil_ml.main:app --host 127.0.0.1 --port 8001 </dev/null > ~/PersonalDev/anvil-cv/logs/ml.log 2>&1 & disown)
 (cd apps/api && PYTHONPATH=$PWD nohup python -m uvicorn anvil_api.main:app --host 127.0.0.1 --port 8000 </dev/null > ~/PersonalDev/anvil-cv/logs/api.log 2>&1 & disown)
-(cd apps/web && nohup npm run dev </dev/null > ~/PersonalDev/anvil-cv/logs/web.log 2>&1 & disown)
+(cd apps/web && nohup pnpm dev </dev/null > ~/PersonalDev/anvil-cv/logs/web.log 2>&1 & disown)
 ```
 
 Then `tail -f logs/*.log` and open <http://localhost:5173>.
@@ -98,7 +98,7 @@ Full setup including Postgres bootstrap: [docs/DEV_SETUP.md](../docs/DEV_SETUP.m
 
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`). Scope in parens: `feat(api,web): …`. Always include `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` trailer.
 - **Python:** ruff + mypy (lenient). `uv` for dep management. SQLModel for ORM. Async FastAPI. Type hints required on public functions.
-- **TypeScript:** strict mode, explicit `type` imports. `npm` (not pnpm despite earlier docs). Zustand for state. Konva for canvas.
+- **TypeScript:** strict mode, explicit `type` imports. `pnpm` (lockfile pinned via `packageManager` in `apps/web/package.json`). Zustand for state. Konva for canvas.
 - **Naming:** `XxxIn` for create requests, `XxxOut` for responses, `XxxUpdate` for PATCH bodies.
 - **Endpoints:** RESTful, plural collections (`/api/projects/{id}/datasets`). All endpoints under `/api/`. Prefer 204 No Content for deletes.
 - **Tests:** add a `scripts/<feature>_e2e.py` for any new vertical feature; existing ones are the reference pattern (login → create project → upload image → exercise feature → assert).

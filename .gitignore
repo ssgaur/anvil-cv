@@ -34,7 +34,6 @@ build/
 data/
 logs/
 checkpoints/
-vendor/
 tmp/
 *.pt
 *.onnx
