@@ -14,6 +14,12 @@ def init_db() -> None:
     # Import models so SQLModel knows about them
     from anvil_api import models  # noqa: F401
     SQLModel.metadata.create_all(engine)
+    # Lightweight forward-compat migrations (solo dev; replace with Alembic later)
+    with engine.begin() as conn:
+        from sqlalchemy import text
+        conn.execute(text(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS active_model_version_id UUID"
+        ))
 
 
 def get_session() -> Iterator[Session]:

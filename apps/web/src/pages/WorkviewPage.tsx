@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
 import Konva from "konva";
 import { api, fileUrl } from "../lib/api";
-import type { Annotation, ClassRow, ImageRow } from "../types";
+import type { Annotation, ClassRow, ImageRow, ModelVersion } from "../types";
 
 type Tool = "pan" | "auto" | "polygon" | "bbox";
 
@@ -30,6 +30,23 @@ export function WorkviewPage() {
   const [predicting, setPredicting] = useState(false);
   const [hoverAnnId, setHoverAnnId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Model version selection (null = base SAM2; "active" = use project default)
+  const [models, setModels] = useState<ModelVersion[]>([]);
+  const [activeModelId, setActiveModelId] = useState<string | null>(null);
+  const [modelChoice, setModelChoice] = useState<string>("active"); // "active" | "base" | <mv_id>
+
+  useEffect(() => {
+    api.listModelVersions(projectId).then(setModels).catch(() => {});
+    api.getProject(projectId).then((p) => setActiveModelId(p.active_model_version_id ?? null)).catch(() => {});
+  }, [projectId]);
+
+  // Resolve which model_version_id to send with predict
+  const predictModelId = useMemo<string | null | undefined>(() => {
+    if (modelChoice === "base") return null;            // explicit base SAM2
+    if (modelChoice === "active") return undefined;     // server picks project active
+    return modelChoice;                                  // explicit ft version
+  }, [modelChoice]);
 
   // Canvas state
   const stageRef = useRef<Konva.Stage>(null);
@@ -176,7 +193,10 @@ export function WorkviewPage() {
       if (!activeClassId) { setError("Pick a class on the right first."); return; }
       setPredicting(true); setError(null);
       try {
-        const r = await api.predict(imageId, { points: [[ix, iy]], point_labels: [1] });
+        const r = await api.predict(imageId, {
+          points: [[ix, iy]], point_labels: [1],
+          ...(predictModelId !== undefined ? { model_version_id: predictModelId } : {}),
+        });
         setPending({ polygon: r.polygon, score: r.score, bbox: r.bbox });
       } catch (err) {
         setError(err instanceof Error ? err.message : "predict failed");
@@ -281,6 +301,12 @@ export function WorkviewPage() {
           )}
         </div>
         <div className="text-xs text-neutral-400">⏱ {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</div>
+        <ModelPicker
+          models={models}
+          activeModelId={activeModelId}
+          choice={modelChoice}
+          onChange={setModelChoice}
+        />
         <div className="text-xs text-neutral-400">{idx + 1} / {siblings.length}</div>
       </div>
 
@@ -544,5 +570,33 @@ function ToolBtn({ active, onClick, label, icon }: { active: boolean; onClick: (
     >
       {icon}
     </button>
+  );
+}
+
+function ModelPicker({
+  models, activeModelId, choice, onChange,
+}: {
+  models: ModelVersion[];
+  activeModelId: string | null;
+  choice: string;
+  onChange: (v: string) => void;
+}) {
+  const ready = models.filter((m) => m.status === "ready");
+  const activeName = activeModelId ? models.find((m) => m.id === activeModelId)?.name ?? "fine-tuned" : "base SAM2";
+  return (
+    <select
+      value={choice}
+      onChange={(e) => onChange(e.target.value)}
+      title="Which model to use for auto-annotate"
+      className="text-xs bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-neutral-300"
+    >
+      <option value="active">Model: {activeName} (default)</option>
+      <option value="base">Model: base SAM2</option>
+      {ready.map((m) => (
+        <option key={m.id} value={m.id}>
+          Model: {m.name}{(m.metrics?.final_val_iou as number | undefined) !== undefined ? ` · IoU ${(m.metrics.final_val_iou as number).toFixed(2)}` : ""}
+        </option>
+      ))}
+    </select>
   );
 }

@@ -138,11 +138,21 @@ def predict(
     points: list[list[float]] | None = None,
     point_labels: list[int] | None = None,
     box: list[float] | None = None,
+    adapter_path: str | None = None,
 ) -> dict:
-    """Returns the best mask as a polygon + bbox + score."""
+    """Returns the best mask as a polygon + bbox + score.
+
+    If `adapter_path` is set, predicts with a fine-tuned LoRA adapter (separate
+    cached predictor per adapter); otherwise uses the base predictor.
+    """
     import cv2
 
-    p = get_predictor()
+    if adapter_path:
+        from anvil_ml.training import get_adapter_predictor
+        p = get_adapter_predictor(adapter_path)
+    else:
+        p = get_predictor()
+
     if embedding_path and Path(embedding_path).exists():
         try:
             _restore_features(p, embedding_path)

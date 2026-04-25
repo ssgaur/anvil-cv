@@ -36,6 +36,13 @@ class AnnotationSource(str, Enum):
     IMPORTED = "imported"
 
 
+class ModelVersionStatus(str, Enum):
+    PENDING = "pending"
+    TRAINING = "training"
+    READY = "ready"
+    FAILED = "failed"
+
+
 # ---------- Tables ----------
 class User(SQLModel, table=True):
     __tablename__ = "users"
@@ -57,6 +64,7 @@ class Project(SQLModel, table=True):
     slug: str = Field(unique=True, index=True, max_length=255)
     description: str = Field(default="")
     owner_id: UUID = Field(foreign_key="users.id", index=True)
+    active_model_version_id: UUID | None = Field(default=None)  # FK added later (avoid circular)
     created_at: datetime = Field(default_factory=utcnow)
 
     owner: User = Relationship(back_populates="projects")
@@ -110,6 +118,27 @@ class Class(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
     project: Project = Relationship(back_populates="classes")
+
+
+class ModelVersion(SQLModel, table=True):
+    __tablename__ = "model_versions"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    project_id: UUID = Field(foreign_key="projects.id", index=True)
+    name: str = Field(max_length=255)
+    base_model: str = Field(default="sam2.1_hiera_b+", max_length=128)
+    dataset_id: UUID | None = Field(default=None, foreign_key="datasets.id")
+    adapter_key: str | None = Field(default=None, max_length=1024)
+    config: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    metrics: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    num_train_images: int = 0
+    num_train_annotations: int = 0
+    status: ModelVersionStatus = Field(default=ModelVersionStatus.PENDING, index=True)
+    error: str | None = None
+    progress: float = 0.0  # 0..1
+    created_by: UUID | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow)
+    completed_at: datetime | None = None
 
 
 class Annotation(SQLModel, table=True):

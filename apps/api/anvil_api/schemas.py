@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from anvil_api.models import AnnotationSource, GeometryType, ImageStatus
+from anvil_api.models import AnnotationSource, GeometryType, ImageStatus, ModelVersionStatus
 
 
 # ---- Auth
@@ -125,9 +125,42 @@ class PredictIn(BaseModel):
     points: list[list[float]] | None = None  # [[x,y],...] in image px
     point_labels: list[int] | None = None  # 1=foreground, 0=background
     box: list[float] | None = None  # [x1,y1,x2,y2]
+    model_version_id: UUID | None = None  # if set, predict with this fine-tuned adapter
 
 
 class PredictOut(BaseModel):
     polygon: list[list[float]]  # [[x,y], ...] simplified contour
     score: float
     bbox: list[float]  # [x,y,w,h]
+
+
+# ---- Model versions (fine-tuned adapters)
+class ModelVersionIn(BaseModel):
+    name: str
+    dataset_id: UUID  # which dataset's annotations to train on
+    epochs: int = Field(default=20, ge=1, le=200)
+    lr: float = Field(default=1e-4, gt=0, le=1e-2)
+    rank: int = Field(default=8, ge=1, le=64)
+    alpha: int = Field(default=16, ge=1, le=128)
+    eval_split: float = Field(default=0.2, ge=0.0, le=0.5)
+
+
+class ModelVersionOut(BaseModel):
+    id: UUID
+    project_id: UUID
+    name: str
+    base_model: str
+    dataset_id: UUID | None
+    status: ModelVersionStatus
+    progress: float
+    error: str | None
+    num_train_images: int
+    num_train_annotations: int
+    config: dict[str, Any]
+    metrics: dict[str, Any]
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class SetActiveModelIn(BaseModel):
+    model_version_id: UUID | None  # null to clear (use base model)

@@ -16,6 +16,26 @@ export interface Project {
   created_at: string;
   dataset_count: number;
   image_count: number;
+  active_model_version_id?: string | null;
+}
+
+export type ModelVersionStatus = "pending" | "training" | "ready" | "failed";
+
+export interface ModelVersion {
+  id: string;
+  project_id: string;
+  name: string;
+  base_model: string;
+  dataset_id: string | null;
+  status: ModelVersionStatus;
+  progress: number;
+  error: string | null;
+  num_train_images: number;
+  num_train_annotations: number;
+  config: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  created_at: string;
+  completed_at: string | null;
 }
 
 export interface Dataset {

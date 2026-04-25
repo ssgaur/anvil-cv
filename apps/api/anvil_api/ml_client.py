@@ -38,6 +38,7 @@ class MLClient:
         points: list[list[float]] | None = None,
         point_labels: list[int] | None = None,
         box: list[float] | None = None,
+        adapter_path: str | None = None,
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(base_url=self.base, timeout=120.0) as c:
             r = await c.post(
@@ -48,6 +49,36 @@ class MLClient:
                     "points": points,
                     "point_labels": point_labels,
                     "box": box,
+                    "adapter_path": adapter_path,
+                },
+            )
+            r.raise_for_status()
+            return r.json()
+
+    async def train(
+        self,
+        items: list[dict[str, Any]],
+        adapter_path: str,
+        epochs: int = 20,
+        lr: float = 1e-4,
+        rank: int = 8,
+        alpha: int = 16,
+        eval_split: float = 0.2,
+        device: str = "cpu",
+    ) -> dict[str, Any]:
+        # No timeout — training can take many minutes.
+        async with httpx.AsyncClient(base_url=self.base, timeout=None) as c:
+            r = await c.post(
+                "/train",
+                json={
+                    "items": items,
+                    "adapter_path": adapter_path,
+                    "epochs": epochs,
+                    "lr": lr,
+                    "rank": rank,
+                    "alpha": alpha,
+                    "eval_split": eval_split,
+                    "device": device,
                 },
             )
             r.raise_for_status()

@@ -20,7 +20,7 @@ from sqlmodel import Session, func, select
 from anvil_api.auth import CurrentUser, SessionDep
 from anvil_api.db import engine
 from anvil_api.ml_client import ml_client
-from anvil_api.models import Annotation, Dataset, Image, ImageStatus, Project
+from anvil_api.models import Annotation, Dataset, Image, ImageStatus, ModelVersion, ModelVersionStatus, Project
 from anvil_api.schemas import ImageOut, PredictIn, PredictOut
 from anvil_api.storage import storage
 
@@ -214,11 +214,20 @@ async def predict(
     if img.status != ImageStatus.READY:
         raise HTTPException(409, f"image not ready (status={img.status})")
 
+    # Resolve adapter: explicit model_version_id wins, else project's active
+    adapter_path: str | None = None
+    mv_id = body.model_version_id or p.active_model_version_id
+    if mv_id:
+        mv = session.get(ModelVersion, mv_id)
+        if mv and mv.project_id == p.id and mv.status == ModelVersionStatus.READY and mv.adapter_key:
+            adapter_path = storage.absolute_path(mv.adapter_key)
+
     res = await ml_client.predict(
         image_path=storage.absolute_path(img.storage_key),
         embedding_path=storage.absolute_path(img.embedding_key) if img.embedding_key else None,
         points=body.points,
         point_labels=body.point_labels,
         box=body.box,
+        adapter_path=adapter_path,
     )
     return PredictOut(**res)

@@ -1,5 +1,5 @@
 import type {
-  Annotation, ClassRow, Dataset, ImageRow, PredictResponse, Project, User,
+  Annotation, ClassRow, Dataset, ImageRow, ModelVersion, PredictResponse, Project, User,
 } from "../types";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -143,8 +143,26 @@ export const api = {
   // Predict
   predict: (imageId: string, body: {
     points?: [number, number][]; point_labels?: number[]; box?: [number, number, number, number];
+    model_version_id?: string | null;
   }) =>
     req<PredictResponse>(`/api/images/${imageId}/predict`, {
       method: "POST", body: JSON.stringify(body),
+    }),
+
+  // Model versions (fine-tuned LoRA adapters)
+  listModelVersions: (projectId: string) =>
+    req<ModelVersion[]>(`/api/projects/${projectId}/model-versions`),
+  getModelVersion: (id: string) =>
+    req<ModelVersion>(`/api/model-versions/${id}`),
+  createModelVersion: (projectId: string, body: {
+    name: string; dataset_id: string;
+    epochs?: number; lr?: number; rank?: number; alpha?: number; eval_split?: number;
+  }) =>
+    req<ModelVersion>(`/api/projects/${projectId}/model-versions`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  setActiveModel: (projectId: string, modelVersionId: string | null) =>
+    req<ModelVersion | null>(`/api/projects/${projectId}/active-model`, {
+      method: "POST", body: JSON.stringify({ model_version_id: modelVersionId }),
     }),
 };

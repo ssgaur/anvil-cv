@@ -8,7 +8,7 @@ from anvil_api import __version__
 from anvil_api.auth import get_or_create_admin
 from anvil_api.config import settings
 from anvil_api.db import engine, init_db
-from anvil_api.routes import annotations, auth, classes, datasets, images, projects
+from anvil_api.routes import annotations, auth, classes, datasets, images, models, projects
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ app.include_router(datasets.router, prefix=API)
 app.include_router(images.router, prefix=API)
 app.include_router(classes.router, prefix=API)
 app.include_router(annotations.router, prefix=API)
+app.include_router(models.router, prefix=API)
 
 
 @app.get("/health")
