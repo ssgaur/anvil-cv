@@ -250,6 +250,9 @@ export function WorkviewPage() {
   const [stageSize, setStageSize] = useState({ w: 800, h: 600 });
   const [imgStartTime] = useState(Date.now());
   const [elapsed, setElapsed] = useState(0);
+  // Hold-space-to-pan (overrides any active tool while held)
+  const [spacePan, setSpacePan] = useState(false);
+  const isPanning = tool === "pan" || spacePan;
 
   // ---- Data load
   const loadAll = useCallback(async () => {
@@ -321,13 +324,28 @@ export function WorkviewPage() {
   // Fit-to-screen on image load
   useEffect(() => {
     if (!htmlImage || !stageSize.w || !stageSize.h) return;
+    fitToScreen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [htmlImage, stageSize]);
+
+  function fitToScreen() {
+    if (!htmlImage || !stageSize.w || !stageSize.h) return;
     const scale = Math.min(stageSize.w / htmlImage.width, stageSize.h / htmlImage.height) * 0.95;
     setView({
       scale,
       x: (stageSize.w - htmlImage.width * scale) / 2,
       y: (stageSize.h - htmlImage.height * scale) / 2,
     });
-  }, [htmlImage, stageSize]);
+  }
+
+  function zoomTo100() {
+    if (!htmlImage || !stageSize.w || !stageSize.h) return;
+    setView({
+      scale: 1,
+      x: (stageSize.w - htmlImage.width) / 2,
+      y: (stageSize.h - htmlImage.height) / 2,
+    });
+  }
 
   // Per-image timer
   useEffect(() => {
@@ -346,6 +364,13 @@ export function WorkviewPage() {
         return;
       }
       if (mod && (e.key === "y" || e.key === "Y")) { e.preventDefault(); redo(); return; }
+      if (e.key === " " || e.code === "Space") {
+        // Hold-to-pan; ignore key auto-repeat
+        if (!e.repeat) { e.preventDefault(); setSpacePan(true); }
+        return;
+      }
+      if (e.key === "f" || e.key === "F") { fitToScreen(); return; }
+      if (e.key === "0") { zoomTo100(); return; }
       if (e.key === "v") setTool("pan");
       else if (e.key === "a") setTool("auto");
       else if (e.key === "p") setTool("polygon");
@@ -366,8 +391,18 @@ export function WorkviewPage() {
       } else if (e.key === "ArrowRight") gotoSibling(1);
       else if (e.key === "ArrowLeft") gotoSibling(-1);
     }
+    function ku(e: KeyboardEvent) {
+      if (e.key === " " || e.code === "Space") setSpacePan(false);
+    }
+    function blur() { setSpacePan(false); }
     window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
+    window.addEventListener("keyup", ku);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", k);
+      window.removeEventListener("keyup", ku);
+      window.removeEventListener("blur", blur);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes]);
 
@@ -446,6 +481,8 @@ export function WorkviewPage() {
 
   // Click
   async function onStageClick(e: Konva.KonvaEventObject<MouseEvent>) {
+    // Don't treat pan-clicks as tool-clicks
+    if (isPanning || e.evt.button === 1) return;
     // Suppress click that came from a drag (auto box / vertex edit)
     if (wasDragRef.current) { wasDragRef.current = false; return; }
     const stage = stageRef.current; if (!stage) return;
@@ -475,6 +512,9 @@ export function WorkviewPage() {
 
   // Mouse down/move/up — handles bbox tool AND auto-tool drag-to-box
   function onMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
+    // Pan modes (hold-space, pan tool, middle-mouse) bypass tool handlers
+    // — Konva's own draggable={isPanning || middle} handles the drag.
+    if (isPanning || e.evt.button === 1) return;
     if (tool === "brush") {
       const stage = stageRef.current; if (!stage) return;
       const p = stage.getPointerPosition(); if (!p) return;
@@ -755,16 +795,16 @@ export function WorkviewPage() {
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
-            draggable={tool === "pan"}
+            draggable={isPanning}
             onDragEnd={(e) => {
-              if (tool === "pan") setView({ ...view, x: e.target.x(), y: e.target.y() });
+              if (isPanning) setView({ ...view, x: e.target.x(), y: e.target.y() });
             }}
             x={view.x}
             y={view.y}
             scaleX={view.scale}
             scaleY={view.scale}
             style={{
-              cursor: tool === "pan" ? "grab" : tool === "auto" ? "crosshair" : "crosshair",
+              cursor: isPanning ? "grab" : tool === "auto" ? "crosshair" : "crosshair",
               background: "#171717",
             }}
           >
@@ -982,6 +1022,32 @@ export function WorkviewPage() {
               >
                 Clear (Esc)
               </button>
+            </div>
+          )}
+
+          {/* Zoom / pan mini-toolbar (always visible) */}
+          <div className="absolute bottom-20 right-3 bg-neutral-900/90 border border-neutral-700 rounded-lg px-2 py-1 flex items-center gap-1 text-xs shadow-xl z-10">
+            <button
+              onClick={fitToScreen}
+              title="Fit image to screen (F)"
+              className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200"
+            >
+              ⤢ Fit
+            </button>
+            <button
+              onClick={zoomTo100}
+              title="Reset to 100% (0)"
+              className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200"
+            >
+              1:1
+            </button>
+            <span className="text-neutral-400 px-2 tabular-nums w-14 text-right">
+              {Math.round(view.scale * 100)}%
+            </span>
+          </div>
+          {spacePan && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs px-3 py-1 rounded-full shadow z-10">
+              ✋ Pan (release Space to resume)
             </div>
           )}
 
