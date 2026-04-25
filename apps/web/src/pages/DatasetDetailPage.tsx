@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, fileUrl } from "../lib/api";
+import { api, downloadCocoExport, fileUrl } from "../lib/api";
 import type { Dataset, ImageRow } from "../types";
 
 export function DatasetDetailPage() {
@@ -82,6 +82,20 @@ export function DatasetDetailPage() {
           <div className="flex gap-2">
             <input ref={fileInput} type="file" multiple accept="image/*" hidden
               onChange={(e) => upload(e.target.files)} />
+            <button
+              onClick={async () => {
+                try {
+                  await downloadCocoExport(projectId, datasetId, `${dataset.slug}-coco.zip`);
+                } catch (e) {
+                  alert(e instanceof Error ? e.message : "export failed");
+                }
+              }}
+              disabled={counts.ready === 0}
+              title="Download annotations.json (COCO format) + images as a ZIP"
+              className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-100 font-medium px-4 py-2 rounded text-sm border border-neutral-700"
+            >
+              Export COCO
+            </button>
             <button
               onClick={() => fileInput.current?.click()}
               disabled={uploading}

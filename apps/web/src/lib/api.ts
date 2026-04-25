@@ -47,6 +47,20 @@ export function fileUrl(rel: string | null | undefined): string {
   return `${API}${rel}`;
 }
 
+export async function downloadCocoExport(projectId: string, datasetId: string, filename: string) {
+  const t = token();
+  const r = await fetch(`${API}/api/projects/${projectId}/datasets/${datasetId}/export/coco`, {
+    headers: t ? { Authorization: `Bearer ${t}` } : undefined,
+  });
+  if (!r.ok) throw new Error(`export failed: ${r.status} ${r.statusText}`);
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const api = {
   setToken,
   token,
