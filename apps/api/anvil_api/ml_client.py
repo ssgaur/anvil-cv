@@ -85,4 +85,23 @@ class MLClient:
             return r.json()
 
 
+    async def score(
+        self,
+        image_path: str,
+        embedding_path: str | None,
+        adapter_path: str | None = None,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(base_url=self.base, timeout=120.0) as c:
+            r = await c.post(
+                "/score",
+                json={
+                    "image_path": image_path,
+                    "embedding_path": embedding_path,
+                    "adapter_path": adapter_path,
+                },
+            )
+            r.raise_for_status()
+            return r.json()
+
+
 ml_client = MLClient()

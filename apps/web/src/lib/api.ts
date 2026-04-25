@@ -165,4 +165,10 @@ export const api = {
     req<ModelVersion | null>(`/api/projects/${projectId}/active-model`, {
       method: "POST", body: JSON.stringify({ model_version_id: modelVersionId }),
     }),
+
+  // Active learning
+  nextUncertain: (projectId: string, datasetId: string) =>
+    req<{ scored_now: number; image: ImageRow | null }>(
+      `/api/projects/${projectId}/datasets/${datasetId}/next-uncertain`,
+    ),
 };

@@ -134,18 +134,32 @@ def set_active(
     project_id: UUID, body: SetActiveModelIn, session: SessionDep, user: CurrentUser,
 ) -> ModelVersionOut | None:
     p = _check_project(session, project_id, user)
-    if body.model_version_id is None:
-        p.active_model_version_id = None
-        session.add(p); session.commit()
-        return None
-    mv = session.get(ModelVersion, body.model_version_id)
-    if not mv or mv.project_id != project_id:
-        raise HTTPException(404, "model version not found in project")
-    if mv.status != ModelVersionStatus.READY:
-        raise HTTPException(409, f"model is not ready (status={mv.status})")
-    p.active_model_version_id = mv.id
-    session.add(p); session.commit()
-    return _to_out(mv)
+    new_mv_id = None if body.model_version_id is None else body.model_version_id
+    if new_mv_id is not None:
+        mv = session.get(ModelVersion, new_mv_id)
+        if not mv or mv.project_id != project_id:
+            raise HTTPException(404, "model version not found in project")
+        if mv.status != ModelVersionStatus.READY:
+            raise HTTPException(409, f"model is not ready (status={mv.status})")
+    else:
+        mv = None
+
+    if p.active_model_version_id != new_mv_id:
+        p.active_model_version_id = new_mv_id
+        session.add(p)
+        # Invalidate uncertainty scores for all images in this project's datasets,
+        # since they were computed against the previous active model.
+        from anvil_api.models import Image, Dataset
+        ds_ids = session.exec(select(Dataset.id).where(Dataset.project_id == project_id)).all()
+        if ds_ids:
+            imgs = session.exec(
+                select(Image).where(Image.dataset_id.in_(ds_ids))  # type: ignore[union-attr]
+            ).all()
+            for img in imgs:
+                img.uncertainty = None
+                session.add(img)
+        session.commit()
+    return _to_out(mv) if mv else None
 
 
 # ---------- Background training ----------

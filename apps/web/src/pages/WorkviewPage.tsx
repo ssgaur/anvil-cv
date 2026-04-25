@@ -48,6 +48,24 @@ export function WorkviewPage() {
     return modelChoice;                                  // explicit ft version
   }, [modelChoice]);
 
+  // Active learning: jump to the most-uncertain unannotated image
+  const [findingNext, setFindingNext] = useState(false);
+  async function gotoMostUncertain() {
+    setFindingNext(true);
+    try {
+      const r = await api.nextUncertain(projectId, datasetId);
+      if (!r.image) {
+        setError("No more un-annotated images in this dataset 🎉");
+        return;
+      }
+      nav(`/projects/${projectId}/datasets/${datasetId}/workview/${r.image.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "next-uncertain failed");
+    } finally {
+      setFindingNext(false);
+    }
+  }
+
   // Canvas state
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -307,6 +325,14 @@ export function WorkviewPage() {
           choice={modelChoice}
           onChange={setModelChoice}
         />
+        <button
+          onClick={gotoMostUncertain}
+          disabled={findingNext}
+          title="Jump to the un-annotated image the active model is least sure about"
+          className="text-xs bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
+        >
+          {findingNext ? "Finding…" : "Next uncertain ✨"}
+        </button>
         <div className="text-xs text-neutral-400">{idx + 1} / {siblings.length}</div>
       </div>
 

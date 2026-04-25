@@ -231,3 +231,78 @@ async def predict(
         adapter_path=adapter_path,
     )
     return PredictOut(**res)
+
+
+# --------- Active learning ---------
+
+@router.get("/projects/{project_id}/datasets/{dataset_id}/next-uncertain")
+async def next_uncertain(
+    project_id: UUID, dataset_id: UUID, session: SessionDep, user: CurrentUser,
+    batch_size: int = 10,
+):
+    """Return the un-annotated image the active model is least sure about.
+
+    Lazily scores up to `batch_size` un-scored images per call, then returns the
+    overall highest-uncertainty candidate in the dataset. Idempotent + cheap on
+    repeat calls.
+    """
+    _check_dataset(session, project_id, dataset_id, user)
+    p = session.get(Project, project_id)
+    assert p is not None
+
+    annotated_q = select(Annotation.image_id).join(Image).where(Image.dataset_id == dataset_id)
+
+    # 1) score up to batch_size unscored images first
+    unscored_q = (
+        select(Image)
+        .where(
+            Image.dataset_id == dataset_id,
+            Image.status == ImageStatus.READY,
+            Image.uncertainty.is_(None),  # type: ignore[union-attr]
+            Image.id.not_in(annotated_q),  # type: ignore[union-attr]
+        )
+        .limit(batch_size)
+    )
+    unscored = list(session.exec(unscored_q).all())
+
+    adapter_path = None
+    if p.active_model_version_id:
+        mv = session.get(ModelVersion, p.active_model_version_id)
+        if mv and mv.status == ModelVersionStatus.READY and mv.adapter_key:
+            adapter_path = storage.absolute_path(mv.adapter_key)
+
+    scored = 0
+    for img in unscored:
+        if not img.embedding_key:
+            continue
+        try:
+            r = await ml_client.score(
+                image_path=storage.absolute_path(img.storage_key),
+                embedding_path=storage.absolute_path(img.embedding_key),
+                adapter_path=adapter_path,
+            )
+            img.uncertainty = float(r["uncertainty"])
+            session.add(img)
+            scored += 1
+        except Exception as e:
+            print(f"[anvil-api] uncertainty score failed for {img.id}: {e}")
+    if scored:
+        session.commit()
+
+    # 2) pick the most uncertain across all (already-scored) un-annotated images
+    best_q = (
+        select(Image)
+        .where(
+            Image.dataset_id == dataset_id,
+            Image.status == ImageStatus.READY,
+            Image.uncertainty.is_not(None),  # type: ignore[union-attr]
+            Image.id.not_in(annotated_q),  # type: ignore[union-attr]
+        )
+        .order_by(Image.uncertainty.desc())  # type: ignore[union-attr]
+        .limit(1)
+    )
+    best = session.exec(best_q).first()
+    return {
+        "scored_now": scored,
+        "image": _to_out(session, best) if best else None,
+    }

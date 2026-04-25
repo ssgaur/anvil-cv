@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from anvil_ml import __version__
-from anvil_ml.engine import device_name, embed, predict
+from anvil_ml.engine import device_name, embed, predict, score_uncertainty
 
 app = FastAPI(title="Anvil ML", version=__version__)
 
@@ -101,3 +101,21 @@ async def train_endpoint(req: TrainRequest) -> dict[str, Any]:
         return await asyncio.to_thread(train_lora, items, req.adapter_path, cfg)
     except Exception as e:
         raise HTTPException(500, f"train failed: {e}") from e
+
+
+class ScoreRequest(BaseModel):
+    image_path: str
+    embedding_path: str | None = None
+    adapter_path: str | None = None
+
+
+@app.post("/score")
+async def score_endpoint(req: ScoreRequest) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(
+            score_uncertainty, req.image_path, req.embedding_path, req.adapter_path,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(404, f"missing file: {e}") from e
+    except Exception as e:
+        raise HTTPException(500, f"score failed: {e}") from e

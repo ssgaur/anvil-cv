@@ -149,6 +149,15 @@ function ImageCard({ img, projectId, datasetId }: { img: ImageRow; projectId: st
             {img.annotation_count}
           </div>
         )}
+        {img.annotation_count === 0 && img.uncertainty != null && (
+          <div
+            className="absolute bottom-2 right-2 bg-black/70 text-[10px] px-1.5 py-0.5 rounded font-mono"
+            style={{ color: img.uncertainty > 0.4 ? "#fca5a5" : img.uncertainty > 0.15 ? "#fde68a" : "#86efac" }}
+            title={`Uncertainty score (1 - mean confidence over a 3x3 prompt grid)`}
+          >
+            ?{(img.uncertainty * 100).toFixed(0)}
+          </div>
+        )}
       </div>
       <div className="px-2 py-1.5 text-[11px] truncate text-neutral-400">{img.filename}</div>
     </Link>

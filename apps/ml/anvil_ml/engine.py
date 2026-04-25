@@ -190,3 +190,55 @@ def predict(
         "score": score,
         "bbox": [float(x), float(y), float(w), float(h)],
     }
+
+
+def score_uncertainty(
+    image_path: str,
+    embedding_path: str | None,
+    adapter_path: str | None = None,
+) -> dict:
+    """Active-learning score in [0,1]; higher = model is less confident.
+
+    Prompts SAM2 at a 3x3 interior grid (9 points). For each prompt we read
+    SAM2's predicted IoU (its built-in confidence over its 3 candidate masks)
+    and take the max. uncertainty = 1 - mean(max_iou_per_prompt).
+    """
+    if adapter_path:
+        from anvil_ml.training import get_adapter_predictor
+        p = get_adapter_predictor(adapter_path)
+    else:
+        p = get_predictor()
+
+    if embedding_path and Path(embedding_path).exists():
+        try:
+            _restore_features(p, embedding_path)
+        except Exception as e:
+            print(f"[anvil-ml] score: failed restore ({e}); re-embedding")
+            p.set_image(_load_image(image_path))
+    else:
+        p.set_image(_load_image(image_path))
+
+    h, w = p._orig_hw[0]  # type: ignore[attr-defined]
+    xs = np.linspace(0.2 * w, 0.8 * w, 3)
+    ys = np.linspace(0.2 * h, 0.8 * h, 3)
+
+    confs: list[float] = []
+    for y in ys:
+        for x in xs:
+            try:
+                _, scores, _ = p.predict(
+                    point_coords=np.array([[x, y]], dtype=np.float32),
+                    point_labels=np.array([1], dtype=np.int64),
+                    multimask_output=True,
+                )
+                confs.append(float(scores.max()))
+            except Exception:
+                continue
+    if not confs:
+        return {"uncertainty": 1.0, "mean_conf": 0.0, "n_probes": 0}
+    mean_conf = float(np.mean(confs))
+    return {
+        "uncertainty": max(0.0, min(1.0, 1.0 - mean_conf)),
+        "mean_conf": mean_conf,
+        "n_probes": len(confs),
+    }
