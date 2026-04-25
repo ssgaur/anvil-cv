@@ -44,6 +44,8 @@ export function WorkviewPage() {
   // Polygon vertex edit
   const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null);
   const [editPoly, setEditPoly] = useState<[number, number][] | null>(null);
+  // Bbox handle edit (live buffer while dragging handles or moving the box)
+  const [editBbox, setEditBbox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   // Snapshot of the annotation taken when entering edit mode (for undo of polygon edits)
   const editBeforeRef = useRef<Annotation | null>(null);
 
@@ -153,7 +155,7 @@ export function WorkviewPage() {
       // Undo a create => delete.
       await api.deleteAnnotation(op.ann.id);
       setAnnotations((arr) => arr.filter((a) => a.id !== op.ann.id));
-      if (selectedAnnId === op.ann.id) { setSelectedAnnId(null); setEditPoly(null); }
+      if (selectedAnnId === op.ann.id) { setSelectedAnnId(null); setEditPoly(null); setEditBbox(null); }
       return { kind: "delete", ann: op.ann };
     }
     if (op.kind === "delete") {
@@ -271,7 +273,7 @@ export function WorkviewPage() {
 
   // Reset selection / prompts when switching images
   useEffect(() => {
-    setSelectedAnnId(null); setEditPoly(null);
+    setSelectedAnnId(null); setEditPoly(null); setEditBbox(null);
     editBeforeRef.current = null;
     setUndoStack([]); setRedoStack([]);
     clearPrompts();
@@ -384,7 +386,7 @@ export function WorkviewPage() {
         if (showHelp) { setShowHelp(false); return; }
         setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
         clearPrompts();
-        setSelectedAnnId(null); setEditPoly(null);
+        setSelectedAnnId(null); setEditPoly(null); setEditBbox(null);
         if (tool === "brush") clearMask();
       }
       else if (e.key === "Enter" && tool === "polygon" && polyPoints.length >= 3) commitPolygon();
@@ -640,18 +642,28 @@ export function WorkviewPage() {
     const target = annotations.find((a) => a.id === id);
     await api.deleteAnnotation(id);
     setAnnotations((arr) => arr.filter((a) => a.id !== id));
-    if (selectedAnnId === id) { setSelectedAnnId(null); setEditPoly(null); }
+    if (selectedAnnId === id) { setSelectedAnnId(null); setEditPoly(null); setEditBbox(null); }
     if (target) pushOp({ kind: "delete", ann: target });
   }
 
   // ---- Polygon vertex editing ----
   function selectAnnotation(a: Annotation) {
-    if (a.geometry_type !== "polygon" || !a.geometry.points) {
-      setSelectedAnnId(a.id); setEditPoly(null); editBeforeRef.current = null; return;
-    }
     setSelectedAnnId(a.id);
-    setEditPoly(a.geometry.points.map((p: number[]) => [p[0], p[1]] as [number, number]));
-    editBeforeRef.current = a;
+    if (a.geometry_type === "polygon" && a.geometry.points) {
+      setEditPoly(a.geometry.points.map((p: number[]) => [p[0], p[1]] as [number, number]));
+      setEditBbox(null);
+      editBeforeRef.current = a;
+      return;
+    }
+    if (a.geometry_type === "bbox" && a.geometry.x !== undefined) {
+      setEditBbox({ x: a.geometry.x!, y: a.geometry.y!, w: a.geometry.w!, h: a.geometry.h! });
+      setEditPoly(null);
+      editBeforeRef.current = a;
+      return;
+    }
+    setEditPoly(null);
+    setEditBbox(null);
+    editBeforeRef.current = null;
   }
 
   async function flushEditPoly() {
@@ -699,6 +711,61 @@ export function WorkviewPage() {
     const next = [...editPoly.slice(0, j), [mx, my] as [number, number], ...editPoly.slice(j)];
     setEditPoly(next);
     setTimeout(flushEditPoly, 0);
+  }
+
+  // ---- Bbox 8-handle editing ----
+  // Live update of the in-progress bbox while a handle or the body is dragged.
+  // Anchor = the corner that should stay fixed (or null for body-drag).
+  function resizeBbox(anchor: "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w", x: number, y: number) {
+    if (!editBbox || !image) return;
+    let { x: bx, y: by, w, h } = editBbox;
+    const x2 = bx + w;
+    const y2 = by + h;
+    let nx1 = bx, ny1 = by, nx2 = x2, ny2 = y2;
+    if (anchor.includes("w")) nx1 = x;
+    if (anchor.includes("e")) nx2 = x;
+    if (anchor.includes("n")) ny1 = y;
+    if (anchor.includes("s")) ny2 = y;
+    // Clamp to image bounds
+    nx1 = Math.max(0, Math.min(image.width, nx1));
+    nx2 = Math.max(0, Math.min(image.width, nx2));
+    ny1 = Math.max(0, Math.min(image.height, ny1));
+    ny2 = Math.max(0, Math.min(image.height, ny2));
+    // Normalize so w/h stay positive (handle "flipped" drags through the opposite edge)
+    const fx = Math.min(nx1, nx2);
+    const fy = Math.min(ny1, ny2);
+    const fw = Math.max(1, Math.abs(nx2 - nx1));
+    const fh = Math.max(1, Math.abs(ny2 - ny1));
+    setEditBbox({ x: fx, y: fy, w: fw, h: fh });
+  }
+
+  function moveBbox(dx: number, dy: number) {
+    if (!editBbox || !image) return;
+    const x = Math.max(0, Math.min(image.width - editBbox.w, editBbox.x + dx));
+    const y = Math.max(0, Math.min(image.height - editBbox.h, editBbox.y + dy));
+    setEditBbox({ ...editBbox, x, y });
+  }
+
+  async function flushEditBbox() {
+    if (!selectedAnnId || !editBbox) return;
+    const before = editBeforeRef.current;
+    try {
+      const updated = await api.updateAnnotation(selectedAnnId, {
+        geometry: { ...editBbox },
+      });
+      setAnnotations((arr) => arr.map((x) => (x.id === selectedAnnId ? updated : x)));
+      if (before && before.id === updated.id) {
+        const same =
+          before.geometry?.x === updated.geometry?.x &&
+          before.geometry?.y === updated.geometry?.y &&
+          before.geometry?.w === updated.geometry?.w &&
+          before.geometry?.h === updated.geometry?.h;
+        if (!same) pushOp({ kind: "update", before, after: updated });
+      }
+      editBeforeRef.current = updated;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "update failed");
+    }
   }
 
   const classMap = useMemo(() => {
@@ -860,14 +927,29 @@ export function WorkviewPage() {
                   );
                 }
                 if (a.geometry_type === "bbox" && a.geometry.x !== undefined) {
+                  // While selected, render from the live edit buffer so handle drags update visibly.
+                  const bx = isSelected && editBbox ? editBbox.x : a.geometry.x;
+                  const by = isSelected && editBbox ? editBbox.y : a.geometry.y!;
+                  const bw = isSelected && editBbox ? editBbox.w : a.geometry.w!;
+                  const bh = isSelected && editBbox ? editBbox.h : a.geometry.h!;
                   return (
                     <Rect
                       key={a.id}
-                      x={a.geometry.x} y={a.geometry.y!}
-                      width={a.geometry.w!} height={a.geometry.h!}
+                      x={bx} y={by}
+                      width={bw} height={bh}
                       stroke={color}
                       strokeWidth={(isSelected ? 3 : 2) / view.scale}
                       fill={color + "22"}
+                      draggable={isSelected}
+                      onDragStart={() => { wasDragRef.current = true; }}
+                      onDragMove={(ev) => {
+                        if (!isSelected || !editBbox) return;
+                        // Convert the Konva node position back into a (dx,dy) relative to the buffer
+                        const nx = ev.target.x();
+                        const ny = ev.target.y();
+                        moveBbox(nx - editBbox.x, ny - editBbox.y);
+                      }}
+                      onDragEnd={() => { wasDragRef.current = true; flushEditBbox(); }}
                       onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
                       onMouseEnter={() => setHoverAnnId(a.id)}
                       onMouseLeave={() => setHoverAnnId(null)}
@@ -916,6 +998,64 @@ export function WorkviewPage() {
                         onDragEnd={() => { wasDragRef.current = true; flushEditPoly(); }}
                       />
                     ))}
+                  </>
+                );
+              })()}
+
+              {/* 8-handle resize for selected bbox */}
+              {selectedAnnId && editBbox && (() => {
+                const sel = annotations.find((x) => x.id === selectedAnnId);
+                if (!sel || sel.geometry_type !== "bbox") return null;
+                const color = classMap.get(sel.class_id)?.color ?? "#3b82f6";
+                const r = 5 / view.scale;
+                const { x, y, w, h } = editBbox;
+                const cx = x + w / 2;
+                const cy = y + h / 2;
+                type Anchor = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+                const handles: { a: Anchor; x: number; y: number; cursor: string }[] = [
+                  { a: "nw", x, y, cursor: "nwse-resize" },
+                  { a: "n",  x: cx, y, cursor: "ns-resize" },
+                  { a: "ne", x: x + w, y, cursor: "nesw-resize" },
+                  { a: "e",  x: x + w, y: cy, cursor: "ew-resize" },
+                  { a: "se", x: x + w, y: y + h, cursor: "nwse-resize" },
+                  { a: "s",  x: cx, y: y + h, cursor: "ns-resize" },
+                  { a: "sw", x, y: y + h, cursor: "nesw-resize" },
+                  { a: "w",  x, y: cy, cursor: "ew-resize" },
+                ];
+                return (
+                  <>
+                    {handles.map((hh) => {
+                      const lockX = hh.a === "n" || hh.a === "s";
+                      const lockY = hh.a === "e" || hh.a === "w";
+                      return (
+                        <Rect
+                          key={`bh-${hh.a}`}
+                          x={hh.x - r} y={hh.y - r}
+                          width={r * 2} height={r * 2}
+                          fill="#ffffff"
+                          stroke={color}
+                          strokeWidth={1.5 / view.scale}
+                          draggable
+                          dragBoundFunc={(pos) => ({
+                            x: lockX ? view.x + (hh.x - r) * view.scale : pos.x,
+                            y: lockY ? view.y + (hh.y - r) * view.scale : pos.y,
+                          })}
+                          onMouseEnter={(ev) => {
+                            const stage = ev.target.getStage();
+                            if (stage) stage.container().style.cursor = hh.cursor;
+                          }}
+                          onMouseLeave={(ev) => {
+                            const stage = ev.target.getStage();
+                            if (stage) stage.container().style.cursor = "";
+                          }}
+                          onDragStart={() => { wasDragRef.current = true; }}
+                          onDragMove={(ev) => {
+                            resizeBbox(hh.a, ev.target.x() + r, ev.target.y() + r);
+                          }}
+                          onDragEnd={() => { wasDragRef.current = true; flushEditBbox(); }}
+                        />
+                      );
+                    })}
                   </>
                 );
               })()}
@@ -1251,6 +1391,16 @@ const SHORTCUT_GROUPS: { title: string; rows: [string, string][] }[] = [
       ["Drag handle", "Move vertex"],
       ["Click white midpoint", "Insert vertex"],
       ["Shift/Alt-click handle", "Delete vertex (min 3)"],
+    ],
+  },
+  {
+    title: "Bounding box (B)",
+    rows: [
+      ["Drag", "Draw new bbox"],
+      ["Click bbox", "Select & show 8 handles"],
+      ["Drag corner / edge", "Resize"],
+      ["Drag body", "Move"],
+      ["Del / Backspace", "Delete (when hovered)"],
     ],
   },
   {
