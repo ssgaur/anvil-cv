@@ -1,6 +1,19 @@
 # Copilot Onboarding for Anvil
 
 > **Read this first** when starting a fresh Copilot CLI / Coding Agent session on this repo. It contains everything you need to be productive without scanning the whole codebase.
+>
+> **For current state + open todos + which track you should be on, also read [`HANDOFF.md`](../HANDOFF.md) at the repo root.** This file (`copilot-instructions.md`) is the *stable* onboarding (architecture, conventions, gotchas). HANDOFF.md is the *live* state (what's done, what's next, which folders to touch).
+
+## Work is split into TWO tracks — pick one per session
+
+To keep sessions short and focused (avoid 11-checkpoint sprawl), Anvil work runs as two parallel tracks. **A session should commit to ONE track and not touch the other track's folders.**
+
+| Track | Goal | Folder anchor (yours to touch) | Folder anchor (DO NOT touch) |
+|---|---|---|---|
+| **A — Launch Sprint** | 2-week distribution sprint: SAM2 fine-tuning benchmark → blog → landing → outreach | `benchmarks/`, `docs/launch/`, landing page repo | `apps/`, `compose.yml` |
+| **B — Product Hardening** | Make the OSS app feel enterprise-grade (auth, roles, onboarding, perf, observability) | `apps/`, `compose.yml`, root configs | `benchmarks/` |
+
+If the user hasn't told you which track, **ask before touching code**. Cross-track changes are allowed only when explicitly requested.
 
 ## TL;DR — what is this?
 
