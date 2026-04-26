@@ -13,7 +13,7 @@ members = ["apps/api", "apps/ml", "apps/worker", "packages/storage"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = [".venv", "node_modules", "checkpoints"]
+extend-exclude = [".venv", "node_modules", "checkpoints", "vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM"]
@@ -23,7 +23,7 @@ ignore = ["E501"]
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true
-exclude = ["node_modules", ".venv", "checkpoints"]
+exclude = ["node_modules", ".venv", "checkpoints", "vendor"]
 
 [tool.pytest.ini_options]
 testpaths = ["apps", "packages"]
