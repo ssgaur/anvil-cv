@@ -46,6 +46,15 @@ def init_db() -> None:
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_images_review_status ON images(review_status)"
         ))
+        # OAuth: relax password and add identities table + partial unique idx.
+        conn.execute(text(
+            "ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_user_oauth_identities_provider_subject "
+            "ON user_oauth_identities(provider, subject) "
+            "WHERE provider IS NOT NULL AND subject IS NOT NULL"
+        ))
 
 
 def get_session() -> Iterator[Session]:

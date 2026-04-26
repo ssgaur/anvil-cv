@@ -73,10 +73,34 @@ class User(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     email: str = Field(unique=True, index=True, max_length=255)
     name: str = Field(max_length=255)
-    password_hash: str
+    # Nullable because OAuth-only users have no local password.
+    password_hash: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
 
     projects: list["Project"] = Relationship(back_populates="owner")
+    oauth_identities: list["UserOAuthIdentity"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete"},
+    )
+
+
+class UserOAuthIdentity(SQLModel, table=True):
+    """Linked external identity (Google, GitHub, ...) for a User.
+
+    A User may have multiple identities (one per provider). Linking by email
+    is allowed only when the provider returns a verified email.
+    """
+
+    __tablename__ = "user_oauth_identities"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+    provider: str = Field(max_length=32, index=True)  # "google" | "github"
+    subject: str = Field(max_length=255)  # provider-stable user id
+    email: str | None = Field(default=None, max_length=255)
+    created_at: datetime = Field(default_factory=utcnow)
+
+    user: User = Relationship(back_populates="oauth_identities")
 
 
 class Project(SQLModel, table=True):

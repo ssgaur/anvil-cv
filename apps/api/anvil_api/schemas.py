@@ -34,6 +34,12 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
 
 
+class ProvidersOut(BaseModel):
+    password: bool
+    signup: bool
+    oauth: dict[str, bool]
+
+
 class UserOut(BaseModel):
     id: UUID
     email: str

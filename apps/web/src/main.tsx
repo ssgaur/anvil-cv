@@ -3,10 +3,11 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Layout } from "./components/Layout";
-import { LoginPage } from "./pages/LoginPage";
-import { ProjectsPage } from "./pages/ProjectsPage";
-import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { DatasetDetailPage } from "./pages/DatasetDetailPage";
+import { LoginPage } from "./pages/LoginPage";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import { WorkviewPage } from "./pages/WorkviewPage";
 import "./index.css";
 
@@ -15,6 +16,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
         {/* Workview is full-screen, no shell */}
         <Route element={<ProtectedRoute />}>

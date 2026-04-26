@@ -1,8 +1,20 @@
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Defaults that are safe in dev but MUST be overridden in production.
+_DEFAULT_JWT_SECRET = "change-me"
+_DEFAULT_ADMIN_EMAIL = "admin@anvil.dev"
+_DEFAULT_ADMIN_PASSWORD = "admin"  # noqa: S105 — dev-only default, blocked in prod
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
+
+    # Deployment env: "development" (default) | "production"
+    anvil_env: str = Field(
+        default="development",
+        validation_alias=AliasChoices("ANVIL_ENV", "anvil_env"),
+    )
 
     database_url: str = "postgresql+psycopg://anvil:anvil@localhost:5432/anvil"
     redis_url: str = "redis://localhost:6379/0"
@@ -12,11 +24,76 @@ class Settings(BaseSettings):
     storage_bucket: str = "anvil"
     storage_root: str = "./data"  # for local provider
 
-    jwt_secret: str = "change-me"
+    jwt_secret: str = _DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
     jwt_expires_minutes: int = 10080
 
+    # Bootstrap admin (defaults preserve existing dev/CI scripts). To skip
+    # auto-creation entirely in any environment, set ANVIL_ADMIN_BOOTSTRAP=false.
+    # In production the default password is rejected (see model_validator).
+    admin_bootstrap: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ANVIL_ADMIN_BOOTSTRAP", "admin_bootstrap"),
+    )
+    admin_email: str = Field(
+        default=_DEFAULT_ADMIN_EMAIL,
+        validation_alias=AliasChoices("ANVIL_ADMIN_EMAIL", "admin_email"),
+    )
+    admin_password: str = Field(
+        default=_DEFAULT_ADMIN_PASSWORD,
+        validation_alias=AliasChoices("ANVIL_ADMIN_PASSWORD", "admin_password"),
+    )
+
+    # Whether `/api/auth/signup` is open. Set false to lock down a deployment.
+    allow_signup: bool = True
+
+    # Frontend base URL. Used as the strict redirect target after OAuth.
+    frontend_url: str = "http://localhost:5173"
+
+    # Public base URL where the API is reachable; used to build provider
+    # redirect_uri values. Must match what's registered with each provider.
+    oauth_redirect_base: str = "http://localhost:8000"
+
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    github_client_id: str = ""
+    github_client_secret: str = ""
+
     cors_origins: str = "http://localhost:5173"
+
+    @property
+    def is_production(self) -> bool:
+        return self.anvil_env.lower() == "production"
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def github_oauth_enabled(self) -> bool:
+        return bool(self.github_client_id and self.github_client_secret)
+
+    @model_validator(mode="after")
+    def _enforce_production_guardrails(self) -> "Settings":
+        if not self.is_production:
+            return self
+        problems: list[str] = []
+        if self.jwt_secret == _DEFAULT_JWT_SECRET or len(self.jwt_secret) < 32:
+            problems.append(
+                "JWT_SECRET must be set to a strong (>=32 char) random string in production"
+            )
+        # Only validate admin_password when admin auto-bootstrap is enabled.
+        if self.admin_bootstrap and self.admin_password in ("", _DEFAULT_ADMIN_PASSWORD):
+            problems.append(
+                "ANVIL_ADMIN_PASSWORD must be a non-default strong password in production "
+                "(or set ANVIL_ADMIN_BOOTSTRAP=false to skip admin auto-creation)"
+            )
+        if problems:
+            raise ValueError(
+                "Anvil refused to start due to insecure production config:\n  - "
+                + "\n  - ".join(problems)
+            )
+        return self
 
 
 settings = Settings()

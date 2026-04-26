@@ -88,6 +88,14 @@ export const api = {
   me: () => req<User>("/api/auth/me"),
   logout: () => { setToken(null); location.href = "/login"; },
 
+  // Auth providers (which login methods are enabled on this deployment)
+  providers: () =>
+    req<{ password: boolean; signup: boolean; oauth: Record<string, boolean> }>(
+      "/api/auth/providers",
+    ),
+  oauthLoginUrl: (provider: "google" | "github") =>
+    `${API}/api/auth/oauth/${provider}/login`,
+
   // Projects
   listProjects: () => req<Project[]>("/api/projects"),
   createProject: (body: { name: string; description?: string }) =>

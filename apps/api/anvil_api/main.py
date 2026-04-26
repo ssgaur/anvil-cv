@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
 from anvil_api import __version__
-from anvil_api.auth import get_or_create_admin
+from anvil_api.auth import bootstrap_admin
 from anvil_api.config import settings
 from anvil_api.db import engine, init_db
 from anvil_api.routes import (
@@ -16,6 +16,7 @@ from anvil_api.routes import (
     datasets,
     images,
     models,
+    oauth,
     projects,
 )
 
@@ -24,7 +25,7 @@ from anvil_api.routes import (
 async def lifespan(_app: FastAPI):
     init_db()
     with Session(engine) as s:
-        get_or_create_admin(s)
+        bootstrap_admin(s)
     yield
 
 
@@ -40,6 +41,7 @@ app.add_middleware(
 
 API = "/api"
 app.include_router(auth.router, prefix=API)
+app.include_router(oauth.router, prefix=API)
 app.include_router(projects.router, prefix=API)
 app.include_router(datasets.router, prefix=API)
 app.include_router(images.router, prefix=API)

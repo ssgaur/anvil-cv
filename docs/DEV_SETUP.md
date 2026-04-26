@@ -116,3 +116,73 @@ python scripts/coco_roundtrip_e2e.py
 | Vite dies immediately | You forgot `</dev/null` in the launch command |
 
 See `.github/copilot-instructions.md` for the full gotchas list.
+
+## Authentication
+
+Anvil ships with three login paths, all minted as the same JWT:
+
+1. **Email + password** (default).
+2. **Google OAuth** — enable by setting `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`.
+3. **GitHub OAuth** — enable by setting `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET`.
+
+The login screen automatically shows only the providers configured on the
+backend (it queries `GET /api/auth/providers`).
+
+### Bootstrap admin
+
+On first boot, Anvil seeds an admin from `ANVIL_ADMIN_EMAIL` /
+`ANVIL_ADMIN_PASSWORD` (defaults `admin@anvil.dev` / `admin` for dev). Set
+`ANVIL_ADMIN_BOOTSTRAP=false` to skip auto-creation entirely (use OAuth or
+`/api/auth/signup` instead).
+
+### Production guardrails
+
+When `ANVIL_ENV=production`, the API refuses to start if:
+
+- `JWT_SECRET` is the default `change-me` or shorter than 32 characters, or
+- `ANVIL_ADMIN_BOOTSTRAP=true` (default) and `ANVIL_ADMIN_PASSWORD` is the
+  default `admin` (or empty).
+
+Generate a strong secret: `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+
+### Sign-up gating
+
+Set `ALLOW_SIGNUP=false` in `.env` to disable `/api/auth/signup` (returns
+`403`). The login page also hides the "Create account" toggle when signup is
+disabled. Existing accounts (and OAuth) keep working.
+
+### Setting up Google OAuth
+
+1. Google Cloud Console → APIs & Services → Credentials → **Create OAuth
+   client ID** → Web application.
+2. **Authorized redirect URI**: `http://localhost:8000/api/auth/oauth/google/callback`
+   (use your `OAUTH_REDIRECT_BASE` for non-local).
+3. Copy client id + secret into `.env`:
+   ```
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   ```
+4. Restart the API. The "Continue with Google" button appears.
+
+### Setting up GitHub OAuth
+
+1. GitHub → Settings → Developer settings → **OAuth Apps** → **New OAuth App**.
+2. **Authorization callback URL**: `http://localhost:8000/api/auth/oauth/github/callback`.
+3. Copy client id + secret into `.env`:
+   ```
+   GITHUB_CLIENT_ID=...
+   GITHUB_CLIENT_SECRET=...
+   ```
+4. Restart the API.
+
+### Account linking rules
+
+When a user signs in with a provider whose verified email matches an existing
+local account, the OAuth identity is linked to that account automatically.
+Anvil only links by **provider-verified** email:
+
+- Google: requires `email_verified == true` from the userinfo endpoint.
+- GitHub: requires a `primary && verified` (or any verified) email from
+  `GET /user/emails`.
+
+Unverified emails are rejected with a redirect back to `/login?oauth_error=...`.

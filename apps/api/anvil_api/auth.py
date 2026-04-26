@@ -1,6 +1,11 @@
 """JWT auth + password hashing.
 
-v0 uses simple email+password. OAuth lands in Phase 1.5.
+Real JWT (HS256) + argon2 password hashing. OAuth identities live in
+`UserOAuthIdentity` and are wired up via `routes/oauth.py`.
+
+Admin bootstrap reads `ANVIL_ADMIN_EMAIL` / `ANVIL_ADMIN_PASSWORD` from the
+environment. In production (`ANVIL_ENV=production`), the default values are
+rejected at config-load time (see `config.py`).
 """
 from __future__ import annotations
 
@@ -22,18 +27,30 @@ pwd = CryptContext(schemes=["argon2"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 
+def normalize_email(email: str) -> str:
+    """Lowercase + strip; canonical form for storage and comparison."""
+    return email.strip().lower()
+
+
 def hash_password(p: str) -> str:
     return pwd.hash(p)
 
 
-def verify_password(p: str, h: str) -> bool:
-    return pwd.verify(p, h)
+def verify_password(p: str, h: str | None) -> bool:
+    """Verify password; returns False if the user has no local password (OAuth-only)."""
+    if not h:
+        return False
+    try:
+        return pwd.verify(p, h)
+    except (ValueError, TypeError):
+        return False
 
 
 def make_token(user_id: UUID) -> str:
-    exp = datetime.now(UTC) + timedelta(minutes=settings.jwt_expires_minutes)
+    now = datetime.now(UTC)
+    exp = now + timedelta(minutes=settings.jwt_expires_minutes)
     return jwt.encode(
-        {"sub": str(user_id), "exp": exp},
+        {"sub": str(user_id), "iat": int(now.timestamp()), "exp": exp},
         settings.jwt_secret,
         algorithm=settings.jwt_algorithm,
     )
@@ -61,16 +78,21 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
-def get_or_create_admin(session: Session) -> User:
-    """Ensure a default admin user exists for first-run UX."""
-    admin = session.exec(select(User).where(User.email == "admin@anvil.dev")).first()
-    if admin:
-        return admin
-    admin = User(
-        email="admin@anvil.dev",
-        name="Admin",
-        password_hash=hash_password("admin"),
-    )
+def bootstrap_admin(session: Session) -> User | None:
+    """Ensure a bootstrap admin exists when configured.
+
+    Reads `ANVIL_ADMIN_EMAIL` + `ANVIL_ADMIN_PASSWORD` from settings. If either
+    is empty, bootstrap is skipped (deployment manages users via signup/OAuth).
+    If a user with that email already exists, the password is left alone.
+    """
+    email = normalize_email(settings.admin_email) if settings.admin_email else ""
+    password = settings.admin_password
+    if not settings.admin_bootstrap or not email or not password:
+        return None
+    existing = session.exec(select(User).where(User.email == email)).first()
+    if existing:
+        return existing
+    admin = User(email=email, name="Admin", password_hash=hash_password(password))
     session.add(admin)
     session.commit()
     session.refresh(admin)
