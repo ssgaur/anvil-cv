@@ -21,16 +21,17 @@ from __future__ import annotations
 import json
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from anvil_ml.engine import _device, _restore_features, get_predictor
+from anvil_ml.engine import _device, _restore_features
 from anvil_ml.lora import (
     freeze_all_but_lora,
     inject_lora,
@@ -163,9 +164,10 @@ def train_lora(
 
     # 1. Build a fresh predictor and inject LoRA — we DO NOT mutate the global
     #    inference predictor, so concurrent /predict calls keep working.
+    import os
+
     from sam2.build_sam import build_sam2
     from sam2.sam2_image_predictor import SAM2ImagePredictor
-    import os
     ckpt = os.getenv("SAM2_CHECKPOINT", "./checkpoints/sam2.1_hiera_base_plus.pt")
     cfg_yaml = os.getenv("SAM2_MODEL_CFG", "configs/sam2.1/sam2.1_hiera_b+.yaml")
     ckpt_abs = str(Path(ckpt).resolve())
@@ -220,7 +222,7 @@ def train_lora(
         rng.shuffle(train_set)
         epoch_loss = 0.0
         n = 0
-        for it, ann, gt_mask in train_set:
+        for it, _ann, gt_mask in train_set:
             try:
                 _restore_features(predictor, it.embedding_path)
                 # Move features to device with grad off
@@ -348,10 +350,12 @@ def evaluate_with_adapter(
 
     Used by the model-version A/B compare endpoint.
     """
+    import os
+
     from sam2.build_sam import build_sam2
     from sam2.sam2_image_predictor import SAM2ImagePredictor
+
     from anvil_ml.lora import load_lora
-    import os
     device = torch.device(device_str)
     ckpt = os.getenv("SAM2_CHECKPOINT", "./checkpoints/sam2.1_hiera_base_plus.pt")
     cfg_yaml = os.getenv("SAM2_MODEL_CFG", "configs/sam2.1/sam2.1_hiera_b+.yaml")
@@ -385,10 +389,12 @@ def get_adapter_predictor(adapter_path: str):
 
     Caches per adapter_path so we don't rebuild on every /predict.
     """
+    import os
+
     from sam2.build_sam import build_sam2
     from sam2.sam2_image_predictor import SAM2ImagePredictor
+
     from anvil_ml.lora import load_lora
-    import os
 
     cache_key = str(Path(adapter_path).resolve())
     if cache_key in _adapter_predictors:

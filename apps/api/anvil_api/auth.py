@@ -4,7 +4,7 @@ v0 uses simple email+password. OAuth lands in Phase 1.5.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -31,7 +31,7 @@ def verify_password(p: str, h: str) -> bool:
 
 
 def make_token(user_id: UUID) -> str:
-    exp = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expires_minutes)
+    exp = datetime.now(UTC) + timedelta(minutes=settings.jwt_expires_minutes)
     return jwt.encode(
         {"sub": str(user_id), "exp": exp},
         settings.jwt_secret,

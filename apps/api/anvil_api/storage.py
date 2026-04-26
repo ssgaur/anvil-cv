@@ -4,7 +4,7 @@ S3/Azure/GCS will plug into the same StorageProvider interface in Phase 1.5.
 """
 from __future__ import annotations
 
-import io
+import contextlib
 import os
 import shutil
 from pathlib import Path
@@ -45,10 +45,8 @@ class LocalStorage:
         return open(self._path(key), "rb")
 
     def delete(self, key: str) -> None:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.remove(self._path(key))
-        except FileNotFoundError:
-            pass
 
     def exists(self, key: str) -> bool:
         return self._path(key).exists()

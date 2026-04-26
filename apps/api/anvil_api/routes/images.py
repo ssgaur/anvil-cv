@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+from datetime import UTC
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -234,8 +235,8 @@ def review_action(
       reopen:  approved | rejected          → in_progress
     """
     img = _check_image_owner(session, image_id, user)
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
+    from datetime import datetime
+    now = datetime.now(UTC)
     action = (body.action or "").strip().lower()
 
     if action == "submit":

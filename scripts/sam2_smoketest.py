@@ -1,6 +1,6 @@
 """Smoke test: load SAM2, embed an image, predict mask from a point. MPS device."""
-import time
 import sys
+import time
 from pathlib import Path
 
 import numpy as np

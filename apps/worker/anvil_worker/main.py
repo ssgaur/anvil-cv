@@ -10,6 +10,7 @@ v0.0.1: stubs only.
 """
 
 import os
+
 from arq.connections import RedisSettings
 
 

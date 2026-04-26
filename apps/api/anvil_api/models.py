@@ -3,8 +3,8 @@
 Single-tenant for now (no Org). v0 entities:
   User, Project, Dataset, Image, Class, Annotation
 """
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -13,37 +13,37 @@ from sqlmodel import Field, Relationship, SQLModel
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------- Enums ----------
-class ImageStatus(str, Enum):
+class ImageStatus(StrEnum):
     UPLOADED = "uploaded"
     EMBEDDING = "embedding"
     READY = "ready"
     FAILED = "failed"
 
 
-class GeometryType(str, Enum):
+class GeometryType(StrEnum):
     POLYGON = "polygon"
     BBOX = "bbox"
     BRUSH = "brush"  # rasterized → polygon on save
 
 
-class AnnotationSource(str, Enum):
+class AnnotationSource(StrEnum):
     MANUAL = "manual"
     MODEL = "model"
     IMPORTED = "imported"
 
 
-class ModelVersionStatus(str, Enum):
+class ModelVersionStatus(StrEnum):
     PENDING = "pending"
     TRAINING = "training"
     READY = "ready"
     FAILED = "failed"
 
 
-class ReviewStatus(str, Enum):
+class ReviewStatus(StrEnum):
     """Per-image labeling lifecycle (V7-style)."""
 
     NEW = "new"
@@ -53,7 +53,7 @@ class ReviewStatus(str, Enum):
     REJECTED = "rejected"
 
 
-class ClassPropertyType(str, Enum):
+class ClassPropertyType(StrEnum):
     """How a per-class attribute is captured for each annotation.
 
     - SINGLE: one-of (radio / dropdown), value is a string from `options`

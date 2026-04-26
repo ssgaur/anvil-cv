@@ -1,7 +1,7 @@
 """Model-version routes: list / create (= start fine-tune) / get / set-active."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
@@ -172,7 +172,7 @@ def set_active(
         session.add(p)
         # Invalidate uncertainty scores for all images in this project's datasets,
         # since they were computed against the previous active model.
-        from anvil_api.models import Image, Dataset
+        from anvil_api.models import Dataset, Image
         ds_ids = session.exec(select(Dataset.id).where(Dataset.project_id == project_id)).all()
         if ds_ids:
             imgs = session.exec(
@@ -189,7 +189,7 @@ def set_active(
 @router.post("/projects/{project_id}/model-versions/compare")
 async def compare_versions(
     project_id: UUID,
-    body: "CompareIn",
+    body: CompareIn,
     session: SessionDep,
     user: CurrentUser,
 ) -> dict:
@@ -360,7 +360,7 @@ async def _train_async(mv_id: UUID) -> None:
             mv.adapter_key = adapter_key
             mv.progress = 1.0
             mv.status = ModelVersionStatus.READY
-            mv.completed_at = datetime.now(timezone.utc)
+            mv.completed_at = datetime.now(UTC)
             mv.error = None
         except Exception as e:
             mv.status = ModelVersionStatus.FAILED

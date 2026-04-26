@@ -80,6 +80,7 @@ import io
 import json
 import zipfile
 from datetime import datetime
+
 from fastapi import Response
 from fastapi.responses import StreamingResponse
 
@@ -231,7 +232,6 @@ def export_coco(
 
 
 # -------- COCO import --------
-import re
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
@@ -241,7 +241,6 @@ from PIL import Image as PILImage
 from anvil_api.models import (
     AnnotationSource,
     GeometryType,
-    ImageStatus,
 )
 
 # Same palette as ClassesTab default (kept tiny — only used when COCO
@@ -315,7 +314,7 @@ async def import_coco(
         supported yet) and counted in the response
       - Filenames not present in the zip are skipped (counted)
     """
-    p = _check(session, project_id, user)
+    _check(session, project_id, user)
     d = session.get(Dataset, dataset_id)
     if not d or d.project_id != project_id:
         raise HTTPException(404, "dataset not found")

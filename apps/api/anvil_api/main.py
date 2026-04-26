@@ -8,7 +8,16 @@ from anvil_api import __version__
 from anvil_api.auth import get_or_create_admin
 from anvil_api.config import settings
 from anvil_api.db import engine, init_db
-from anvil_api.routes import annotations, auth, classes, comments, datasets, images, models, projects
+from anvil_api.routes import (
+    annotations,
+    auth,
+    classes,
+    comments,
+    datasets,
+    images,
+    models,
+    projects,
+)
 
 
 @asynccontextmanager

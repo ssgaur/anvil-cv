@@ -11,10 +11,8 @@ Mirrors what the WorkviewPage does:
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import time
 from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
@@ -84,7 +82,7 @@ def main() -> int:
             redo[:] = remap(redo, old_id, new_ann)
             return {"kind": "create", "ann": new_ann}
         # update
-        rev = s.patch(f"{API}/api/annotations/{op['before']['id']}",
+        s.patch(f"{API}/api/annotations/{op['before']['id']}",
                       json={"geometry": op["before"]["geometry"]}).json()
         return {"kind": "update", "before": op["after"], "after": op["before"]}
 

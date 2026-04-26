@@ -17,7 +17,17 @@ extend-exclude = [".venv", "node_modules", "checkpoints", "vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM"]
-ignore = ["E501"]
+ignore = [
+  "E501",  # line length handled by formatter
+  "B008",  # FastAPI Depends/File/Query pattern
+  "N812",  # `import torch.nn.functional as F` is universal convention
+  "E702",  # we use `;` in compact one-liners (notably e2e scripts)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"apps/api/anvil_api/routes/datasets.py" = ["E402"]  # lazy imports for optional deps
+"apps/api/anvil_api/routes/models.py" = ["N814"]    # `Path as _P` to avoid shadowing
+"scripts/*" = ["E402", "E701", "E702", "B007", "N806"]  # one-off e2e scripts
 
 [tool.mypy]
 python_version = "3.11"

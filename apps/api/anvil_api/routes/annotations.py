@@ -4,7 +4,16 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
 from anvil_api.auth import CurrentUser, SessionDep
-from anvil_api.models import Annotation, Class, ClassProperty, ClassPropertyType, Dataset, Image, Project, ReviewStatus
+from anvil_api.models import (
+    Annotation,
+    Class,
+    ClassProperty,
+    ClassPropertyType,
+    Dataset,
+    Image,
+    Project,
+    ReviewStatus,
+)
 from anvil_api.schemas import AnnotationIn, AnnotationOut, AnnotationPatch
 
 router = APIRouter(tags=["annotations"])

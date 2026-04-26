@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import sys
-from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
 

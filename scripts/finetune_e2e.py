@@ -34,7 +34,7 @@ def main() -> int:
         return 2
 
     s = requests.Session()
-    print(f"➜ POST /api/auth/login")
+    print("➜ POST /api/auth/login")
     r = s.post(f"{API}/api/auth/login", json={"email": EMAIL, "password": PASSWORD}, timeout=10)
     r.raise_for_status()
     token = r.json()["access_token"]
