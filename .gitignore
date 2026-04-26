@@ -44,3 +44,7 @@ apps/web/test-results/
 apps/web/playwright-report/
 apps/web/e2e-result.png
 .env.bak
+
+# Benchmark seed images (regenerable via benchmarks/plantvillage/seed_data.py)
+benchmarks/plantvillage/seed/images/
+benchmarks/plantvillage/labeled/

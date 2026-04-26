@@ -1,0 +1,5 @@
+PlantVillage dataset: CC0 1.0 (Public Domain).
+Source: https://github.com/spMohanty/PlantVillage-Dataset (ref: master)
+Original publication: Hughes & Salathe, 2015, arXiv:1511.08060
+
+These curated images are a subset selected for benchmarking SAM2 LoRA fine-tuning. Only transformation: letterbox resize to 1024x1024.
