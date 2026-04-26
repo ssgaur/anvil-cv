@@ -48,3 +48,6 @@ apps/web/e2e-result.png
 # Benchmark seed images (regenerable via benchmarks/plantvillage/seed_data.py)
 benchmarks/plantvillage/seed/images/
 benchmarks/plantvillage/labeled/
+
+# Benchmark dataset (regenerable via seed_data.py)
+benchmarks/plantvillage/dataset/
