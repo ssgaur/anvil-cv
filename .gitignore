@@ -51,3 +51,4 @@ benchmarks/plantvillage/labeled/
 
 # Benchmark dataset (regenerable via seed_data.py)
 benchmarks/plantvillage/dataset/
+benchmarks/plantvillage/logs/
