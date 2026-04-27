@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import select
 
 from anvil_api.auth import (
@@ -11,6 +11,12 @@ from anvil_api.auth import (
 )
 from anvil_api.config import settings
 from anvil_api.models import User, UserRole
+from anvil_api.ratelimit import (
+    hit_login_email,
+    hit_login_ip,
+    hit_signup_ip,
+    reset_login_email,
+)
 from anvil_api.schemas import LoginIn, ProvidersOut, SignupIn, TokenOut, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -37,7 +43,7 @@ def providers() -> ProvidersOut:
     )
 
 
-@router.post("/signup", response_model=TokenOut)
+@router.post("/signup", response_model=TokenOut, dependencies=[Depends(hit_signup_ip)])
 def signup(body: SignupIn, session: SessionDep) -> TokenOut:
     if not settings.allow_signup:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "signup is disabled on this deployment")
@@ -57,13 +63,24 @@ def signup(body: SignupIn, session: SessionDep) -> TokenOut:
     return TokenOut(access_token=make_token(user.id))
 
 
-@router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, session: SessionDep) -> TokenOut:
+@router.post("/login", response_model=TokenOut, dependencies=[Depends(hit_login_ip)])
+def login(body: LoginIn, session: SessionDep, request: Request) -> TokenOut:
     email = normalize_email(body.email)
+    # Per-email throttle: counts only failed attempts (reset on success below)
+    # so an attacker spamming wrong passwords cannot lock out the real user
+    # because *they* trip 429 first; a real user with the correct password
+    # still succeeds and clears the counter.
     user = session.exec(select(User).where(User.email == email)).first()
-    # Same generic 401 whether user is missing, OAuth-only, or wrong password.
     if not user or not verify_password(body.password, user.password_hash):
+        # Record this failure against the email; if it pushes them over the
+        # per-email cap, this raises 429 instead of 401 — by design.
+        try:
+            hit_login_email(email)
+        except HTTPException:
+            raise
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+    # Successful login → clear the per-email failure counter.
+    reset_login_email(email)
     return TokenOut(access_token=make_token(user.id))
 
 

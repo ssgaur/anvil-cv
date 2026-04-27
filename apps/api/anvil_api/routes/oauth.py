@@ -28,7 +28,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from jose import JWTError, jwt
 from sqlmodel import select
@@ -36,6 +36,7 @@ from sqlmodel import select
 from anvil_api.auth import SessionDep, make_token, normalize_email
 from anvil_api.config import settings
 from anvil_api.models import User, UserOAuthIdentity, UserRole
+from anvil_api.ratelimit import hit_oauth_callback_ip
 
 router = APIRouter(prefix="/auth/oauth", tags=["auth"])
 
@@ -281,7 +282,7 @@ def _upsert_oauth_user(
     return user.id
 
 
-@router.get("/{provider}/callback")
+@router.get("/{provider}/callback", dependencies=[Depends(hit_oauth_callback_ip)])
 async def oauth_callback(
     provider: str,
     request: Request,

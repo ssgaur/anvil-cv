@@ -181,6 +181,32 @@ Set `ALLOW_SIGNUP=false` in `.env` to disable `/api/auth/signup` (returns
 `403`). The login page also hides the "Create account" toggle when signup is
 disabled. Existing accounts (and OAuth) keep working.
 
+### Rate limiting
+
+The API ships an in-process sliding-window limiter on auth endpoints to blunt
+brute-force attacks. **Single-replica only** — when scaling to multiple uvicorn
+workers / containers, swap to Redis-backed counters before relying on these.
+
+Defaults (override via env):
+
+| env                                       | limit                                | scope            |
+| ----------------------------------------- | ------------------------------------ | ---------------- |
+| `RATE_LIMIT_LOGIN_PER_MIN`                | 10 / 60 s                            | per client IP    |
+| `RATE_LIMIT_LOGIN_EMAIL_PER_MIN`          | 5 / 60 s (counts only **failed**)    | per email        |
+| `RATE_LIMIT_SIGNUP_PER_HOUR`              | 5 / 60 min                           | per client IP    |
+| `RATE_LIMIT_OAUTH_CALLBACK_PER_MIN`       | 30 / 60 s                            | per client IP    |
+| `RATE_LIMIT_ENABLED`                      | `true`                               | global kill switch |
+| `TRUSTED_PROXY`                           | `false`                              | trust `X-Forwarded-For` leftmost |
+
+When tripped, the API returns `429` with a `Retry-After` header and JSON
+`{"detail": {"detail": "too many requests", "retry_after": <seconds>}}`. The
+per-email limiter is reset on a successful login so attackers cannot lock real
+users out.
+
+Behind a reverse proxy (nginx, Traefik, ALB), set `TRUSTED_PROXY=true` only if
+your proxy strips/rewrites `X-Forwarded-For`; otherwise an attacker can spoof
+their IP and bypass the IP limits.
+
 ### Setting up Google OAuth
 
 1. Google Cloud Console → APIs & Services → Credentials → **Create OAuth

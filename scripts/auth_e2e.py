@@ -155,6 +155,20 @@ def main() -> int:
         assert r.status_code == 404, f"{prov}: {r.status_code} {r.text}"
     print("  ok")
 
+    print("\n[10] rate-limit: per-email failed-login throttle → 429")
+    rl_email = f"rl-{uuid.uuid4().hex[:8]}@example.com"
+    last_status = None
+    for i in range(1, 12):
+        r = c.post("/api/auth/login", json={"email": rl_email, "password": "wrong"})
+        last_status = r.status_code
+        if r.status_code == 429:
+            ra = r.headers.get("Retry-After")
+            print(f"  hit 429 after {i} attempts (Retry-After={ra})")
+            assert ra and int(ra) >= 1, ra
+            break
+    else:
+        print(f"  WARN: never got 429 after 11 attempts (rate_limit_enabled may be off); last={last_status}")
+
     print("\n[9] OAuth login on configured provider → 302 to provider + nonce cookie")
     for prov in ("google", "github"):
         if not p["oauth"].get(prov):

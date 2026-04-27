@@ -69,6 +69,41 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:5173"
 
+    # --- Rate limiting (in-process; single-replica only) ---
+    rate_limit_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("RATE_LIMIT_ENABLED", "rate_limit_enabled"),
+    )
+    rate_limit_login_per_min: int = Field(
+        default=10,
+        validation_alias=AliasChoices("RATE_LIMIT_LOGIN_PER_MIN", "rate_limit_login_per_min"),
+    )
+    # Counts only *failed* logins per email — protects users from password
+    # spraying without giving attackers an account-lockout primitive.
+    rate_limit_login_email_per_min: int = Field(
+        default=5,
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_LOGIN_EMAIL_PER_MIN", "rate_limit_login_email_per_min"
+        ),
+    )
+    rate_limit_signup_per_hour: int = Field(
+        default=5,
+        validation_alias=AliasChoices("RATE_LIMIT_SIGNUP_PER_HOUR", "rate_limit_signup_per_hour"),
+    )
+    rate_limit_oauth_callback_per_min: int = Field(
+        default=30,
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_OAUTH_CALLBACK_PER_MIN", "rate_limit_oauth_callback_per_min"
+        ),
+    )
+
+    # If true, trust X-Forwarded-For (leftmost) for client IP. Off by default
+    # so attackers can't spoof their IP to bypass rate limits.
+    trusted_proxy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("TRUSTED_PROXY", "trusted_proxy"),
+    )
+
     @property
     def is_production(self) -> bool:
         return self.anvil_env.lower() == "production"
