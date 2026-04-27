@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, downloadCocoExport, fileUrl } from "../lib/api";
+import { toast } from "../lib/toast";
 import type { Dataset, ImageRow, ReviewStatus } from "../types";
 
 export function DatasetDetailPage() {
@@ -62,14 +63,14 @@ export function DatasetDetailPage() {
       setImporting(true);
       api.importCocoZip(projectId, datasetId, f)
         .then(async (r) => {
-          alert(
-            `Imported ${r.images_imported} images, ${r.polygons_imported} polygons, ` +
-            `${r.bboxes_imported} bboxes.\n` +
+          toast.success(
+            `Imported ${r.images_imported} images`,
+            `${r.polygons_imported} polygons, ${r.bboxes_imported} bboxes; ` +
             `${r.new_classes} new classes, ${r.matched_existing_classes} reused.`
           );
           await reload();
         })
-        .catch((err) => alert(err instanceof Error ? err.message : "import failed"))
+        .catch((err) => toast.error(err, "Import failed"))
         .finally(() => setImporting(false));
       return;
     }
@@ -121,16 +122,18 @@ export function DatasetDetailPage() {
                 setImporting(true);
                 try {
                   const r = await api.importCocoZip(projectId, datasetId, f);
-                  alert(
-                    `Imported ${r.images_imported} images, ${r.polygons_imported} polygons, ` +
-                    `${r.bboxes_imported} bboxes.\n` +
+                  const skipped: string[] = [];
+                  if (r.images_skipped_missing_or_invalid) skipped.push(`${r.images_skipped_missing_or_invalid} images (missing/invalid)`);
+                  if (r.rle_segmentations_skipped) skipped.push(`${r.rle_segmentations_skipped} RLE segmentations (not yet supported)`);
+                  toast.success(
+                    `Imported ${r.images_imported} images`,
+                    `${r.polygons_imported} polygons, ${r.bboxes_imported} bboxes; ` +
                     `${r.new_classes} new classes, ${r.matched_existing_classes} reused.` +
-                    (r.images_skipped_missing_or_invalid ? `\nSkipped ${r.images_skipped_missing_or_invalid} images (missing/invalid).` : "") +
-                    (r.rle_segmentations_skipped ? `\nSkipped ${r.rle_segmentations_skipped} RLE segmentations (not yet supported).` : "")
+                    (skipped.length ? ` Skipped ${skipped.join("; ")}.` : "")
                   );
                   await reload();
                 } catch (err) {
-                  alert(err instanceof Error ? err.message : "import failed");
+                  toast.error(err, "Import failed");
                 } finally {
                   setImporting(false);
                   if (cocoInput.current) cocoInput.current.value = "";
@@ -151,7 +154,7 @@ export function DatasetDetailPage() {
                   const suffix = reviewFilter !== "all" ? `-${reviewFilter}` : "";
                   await downloadCocoExport(projectId, datasetId, `${dataset.slug}${suffix}-coco.zip`, opts);
                 } catch (e) {
-                  alert(e instanceof Error ? e.message : "export failed");
+                  toast.error(e, "Export failed");
                 }
               }}
               disabled={counts.ready === 0}

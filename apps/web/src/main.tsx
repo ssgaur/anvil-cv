@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { SetupGuard } from "./components/SetupGuard";
 import { Layout } from "./components/Layout";
+import { Toaster } from "./components/Toaster";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { DatasetDetailPage } from "./pages/DatasetDetailPage";
@@ -17,6 +18,7 @@ import "./index.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
+      <Toaster />
       <Routes>
         <Route element={<SetupGuard />}>
           <Route path="/setup" element={<SetupPage />} />

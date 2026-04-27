@@ -4,6 +4,7 @@ import { Circle, Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
 import Konva from "konva";
 import { extractLargestPolygon } from "../lib/brush";
 import { api, fileUrl } from "../lib/api";
+import { toast } from "../lib/toast";
 import { useAuth } from "../store/auth";
 import { isLabeler, isReviewer } from "../lib/roles";
 import type { Annotation, ClassProperty, ClassRow, CommentRow, ImageRow, ModelVersion } from "../types";
@@ -1767,7 +1768,7 @@ function ReviewControls({ image, onReload }: { image: ImageRow | null; onReload:
       await api.reviewAction(image!.id, { action, reason });
       await onReload();
     } catch (e) {
-      window.alert(`Review action failed: ${(e as Error).message}`);
+      toast.error(e, "Review action failed");
     } finally {
       setBusy(false);
     }
@@ -1836,19 +1837,19 @@ function CommentPanel({
     try {
       await api.createComment(imageId, { body: t, x: null, y: null });
       setBody(""); await refresh();
-    } catch (e) { window.alert((e as Error).message); }
+    } catch (e) { toast.error(e); }
     finally { setBusy(false); }
   }
 
   async function toggleResolved(c: CommentRow) {
     try { await api.patchComment(c.id, { resolved: !c.resolved }); await refresh(); }
-    catch (e) { window.alert((e as Error).message); }
+    catch (e) { toast.error(e); }
   }
 
   async function del(c: CommentRow) {
     if (!window.confirm("Delete this comment?")) return;
     try { await api.deleteComment(c.id); await refresh(); }
-    catch (e) { window.alert((e as Error).message); }
+    catch (e) { toast.error(e); }
   }
 
   const open = comments.filter((c) => !c.resolved);

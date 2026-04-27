@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../lib/api";
+import { toast } from "../lib/toast";
 import { useAuth } from "../store/auth";
 import { isAdmin } from "../lib/roles";
 import type { AdminUser, UserRole } from "../types";
@@ -51,22 +52,27 @@ export function AdminUsersPage() {
   async function changeRole(u: AdminUser, next: UserRole) {
     if (next === u.role) return;
     if (u.id === me?.id && next !== "admin") {
-      window.alert("You cannot demote yourself.");
+      toast.warn("You cannot demote yourself.");
       return;
     }
     try {
       await api.adminPatchUser(u.id, { role: next });
+      toast.success(`Updated ${u.email} → ${next}`);
       await reload();
     } catch (e) {
-      window.alert((e as Error).message);
+      toast.error(e);
     }
   }
 
   async function del(u: AdminUser) {
-    if (u.id === me?.id) { window.alert("You cannot delete yourself."); return; }
+    if (u.id === me?.id) { toast.warn("You cannot delete yourself."); return; }
     if (!confirm(`Delete user ${u.email}?`)) return;
-    try { await api.adminDeleteUser(u.id); await reload(); }
-    catch (e) { window.alert((e as Error).message); }
+    try {
+      await api.adminDeleteUser(u.id);
+      toast.success(`Deleted ${u.email}`);
+      await reload();
+    }
+    catch (e) { toast.error(e); }
   }
 
   return (

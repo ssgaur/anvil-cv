@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
+import { toast } from "../lib/toast";
 import type { ClassProperty, ClassPropertyType, ClassRow, CompareResult, Dataset, ModelVersion, Project } from "../types";
 
 const TABS = ["Data", "Classes", "Models", "Settings"] as const;
@@ -327,7 +328,7 @@ function ClassPropertyEditor({
       ? optsText.split(",").map((s) => s.trim()).filter(Boolean)
       : [];
     if ((type === "single" || type === "multi") && options.length === 0) {
-      alert("Add at least one option (comma-separated) for single/multi properties.");
+      toast.warn("Add at least one option (comma-separated) for single/multi properties.");
       return;
     }
     setAdding(true);
@@ -653,7 +654,7 @@ function ModelsTab({
                           onClick={async () => {
                             if (!window.confirm(`Delete model version "${v.name}"?`)) return;
                             try { await api.deleteModelVersion(v.id); await load(); }
-                            catch (e) { alert(e instanceof Error ? e.message : "delete failed"); }
+                            catch (e) { toast.error(e, "Delete failed"); }
                           }}
                           className="text-xs text-neutral-600 hover:text-rose-400"
                           title="Delete this model version (and its adapter file)"
