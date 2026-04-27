@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     # Whether `/api/auth/signup` is open. Set false to lock down a deployment.
     allow_signup: bool = True
 
+    # Default role assigned to new self-signup AND OAuth-created users.
+    # Defaults to "viewer" (safest for OSS/shared deployments) — admin promotes
+    # users explicitly. Set to "labeler" for trusted single-team workspaces.
+    default_signup_role: str = Field(
+        default="viewer",
+        validation_alias=AliasChoices("ANVIL_DEFAULT_SIGNUP_ROLE", "default_signup_role"),
+    )
+
     # Frontend base URL. Used as the strict redirect target after OAuth.
     frontend_url: str = "http://localhost:5173"
 

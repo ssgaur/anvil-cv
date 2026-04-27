@@ -55,6 +55,21 @@ def init_db() -> None:
             "ON user_oauth_identities(provider, subject) "
             "WHERE provider IS NOT NULL AND subject IS NOT NULL"
         ))
+        # RBAC: per-user global role (admin/reviewer/labeler/viewer).
+        # Default = labeler so existing single-user deployments keep editing
+        # access; bootstrap_admin promotes the configured admin email.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'labeler'"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_users_role ON users(role)"
+        ))
+        # CHECK constraint — drop+add to make it idempotent across schema changes.
+        conn.execute(text("ALTER TABLE users DROP CONSTRAINT IF EXISTS ck_users_role"))
+        conn.execute(text(
+            "ALTER TABLE users ADD CONSTRAINT ck_users_role "
+            "CHECK (role IN ('admin','reviewer','labeler','viewer'))"
+        ))
 
 
 def get_session() -> Iterator[Session]:

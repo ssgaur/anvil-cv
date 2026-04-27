@@ -3,31 +3,43 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from anvil_api.auth import CurrentUser, SessionDep
+from anvil_api.auth import (
+    RequireAnyAuthed,
+    RequireLabeler,
+    SessionDep,
+)
 from anvil_api.models import (
     Annotation,
     Class,
     ClassProperty,
     ClassPropertyType,
-    Dataset,
     Image,
-    Project,
     ReviewStatus,
 )
 from anvil_api.schemas import AnnotationIn, AnnotationOut, AnnotationPatch
 
 router = APIRouter(tags=["annotations"])
 
+# Image states in which annotations may be written. SUBMITTED and APPROVED are
+# locked — a reviewer must `reopen` first (which transitions back to in_progress).
+_WRITABLE_STATES = {ReviewStatus.NEW, ReviewStatus.IN_PROGRESS, ReviewStatus.REJECTED}
 
-def _ownership(session, image_id: UUID, user) -> Image:
+
+def _get_image(session, image_id: UUID) -> Image:
     img = session.get(Image, image_id)
     if not img:
         raise HTTPException(404, "image not found")
-    d = session.get(Dataset, img.dataset_id)
-    p = session.get(Project, d.project_id) if d else None
-    if not p or p.owner_id != user.id:
-        raise HTTPException(404, "image not found")
     return img
+
+
+def _ensure_writable(img: Image) -> None:
+    """Block annotation writes when the image is in a frozen review state."""
+    if img.review_status not in _WRITABLE_STATES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"image is {img.review_status.value if hasattr(img.review_status, 'value') else img.review_status} "
+            "— reviewer must reopen before annotations can be edited",
+        )
 
 
 def _to_out(a: Annotation) -> AnnotationOut:
@@ -84,8 +96,8 @@ def _validate_properties(session, class_id: UUID, props: dict) -> dict:
 
 
 @router.get("/images/{image_id}/annotations", response_model=list[AnnotationOut])
-def list_annotations(image_id: UUID, session: SessionDep, user: CurrentUser) -> list[AnnotationOut]:
-    _ownership(session, image_id, user)
+def list_annotations(image_id: UUID, session: SessionDep, _user: RequireAnyAuthed) -> list[AnnotationOut]:
+    _get_image(session, image_id)
     rows = session.exec(
         select(Annotation).where(Annotation.image_id == image_id).order_by(Annotation.created_at)
     ).all()
@@ -98,9 +110,10 @@ def list_annotations(image_id: UUID, session: SessionDep, user: CurrentUser) -> 
     status_code=status.HTTP_201_CREATED,
 )
 def create_annotation(
-    image_id: UUID, body: AnnotationIn, session: SessionDep, user: CurrentUser
+    image_id: UUID, body: AnnotationIn, session: SessionDep, user: RequireLabeler,
 ) -> AnnotationOut:
-    img = _ownership(session, image_id, user)
+    img = _get_image(session, image_id)
+    _ensure_writable(img)
     cls = session.get(Class, body.class_id)
     if not cls:
         raise HTTPException(400, "unknown class_id")
@@ -122,23 +135,25 @@ def create_annotation(
 
 
 @router.delete("/annotations/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_annotation(annotation_id: UUID, session: SessionDep, user: CurrentUser) -> None:
+def delete_annotation(annotation_id: UUID, session: SessionDep, _user: RequireLabeler) -> None:
     a = session.get(Annotation, annotation_id)
     if not a:
         raise HTTPException(404, "annotation not found")
-    _ownership(session, a.image_id, user)
+    img = _get_image(session, a.image_id)
+    _ensure_writable(img)
     session.delete(a)
     session.commit()
 
 
 @router.patch("/annotations/{annotation_id}", response_model=AnnotationOut)
 def update_annotation(
-    annotation_id: UUID, body: AnnotationPatch, session: SessionDep, user: CurrentUser,
+    annotation_id: UUID, body: AnnotationPatch, session: SessionDep, _user: RequireLabeler,
 ) -> AnnotationOut:
     a = session.get(Annotation, annotation_id)
     if not a:
         raise HTTPException(404, "annotation not found")
-    _ownership(session, a.image_id, user)
+    img = _get_image(session, a.image_id)
+    _ensure_writable(img)
     if body.class_id is not None:
         cls = session.get(Class, body.class_id)
         if not cls:

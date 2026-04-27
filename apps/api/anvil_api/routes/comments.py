@@ -6,20 +6,20 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from anvil_api.auth import CurrentUser, SessionDep
-from anvil_api.models import Comment, Dataset, Image, Project, User
+from anvil_api.auth import (
+    RequireAnyAuthed,
+    RequireLabeler,
+    SessionDep,
+)
+from anvil_api.models import Comment, Image, User
 from anvil_api.schemas import CommentIn, CommentOut, CommentPatch
 
 router = APIRouter(tags=["comments"])
 
 
-def _check_image(session, image_id: UUID, user) -> Image:
+def _check_image(session, image_id: UUID) -> Image:
     img = session.get(Image, image_id)
     if not img:
-        raise HTTPException(404, "image not found")
-    d = session.get(Dataset, img.dataset_id)
-    p = session.get(Project, d.project_id) if d else None
-    if not p or p.owner_id != user.id:
         raise HTTPException(404, "image not found")
     return img
 
@@ -34,8 +34,8 @@ def _to_out(session, c: Comment) -> CommentOut:
 
 
 @router.get("/images/{image_id}/comments", response_model=list[CommentOut])
-def list_comments(image_id: UUID, session: SessionDep, user: CurrentUser) -> list[CommentOut]:
-    _check_image(session, image_id, user)
+def list_comments(image_id: UUID, session: SessionDep, _user: RequireAnyAuthed) -> list[CommentOut]:
+    _check_image(session, image_id)
     rows = session.exec(
         select(Comment).where(Comment.image_id == image_id).order_by(Comment.created_at)
     ).all()
@@ -48,9 +48,9 @@ def list_comments(image_id: UUID, session: SessionDep, user: CurrentUser) -> lis
     status_code=status.HTTP_201_CREATED,
 )
 def create_comment(
-    image_id: UUID, body: CommentIn, session: SessionDep, user: CurrentUser,
+    image_id: UUID, body: CommentIn, session: SessionDep, user: RequireLabeler,
 ) -> CommentOut:
-    _check_image(session, image_id, user)
+    _check_image(session, image_id)
     if (body.x is None) != (body.y is None):
         raise HTTPException(400, "x and y must both be set or both omitted")
     c = Comment(
@@ -65,12 +65,12 @@ def create_comment(
 
 @router.patch("/comments/{comment_id}", response_model=CommentOut)
 def update_comment(
-    comment_id: UUID, body: CommentPatch, session: SessionDep, user: CurrentUser,
+    comment_id: UUID, body: CommentPatch, session: SessionDep, _user: RequireLabeler,
 ) -> CommentOut:
     c = session.get(Comment, comment_id)
     if not c:
         raise HTTPException(404, "comment not found")
-    _check_image(session, c.image_id, user)
+    _check_image(session, c.image_id)
     if body.body is not None:
         c.body = body.body.strip()
     if body.resolved is not None:
@@ -82,10 +82,10 @@ def update_comment(
 
 
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_comment(comment_id: UUID, session: SessionDep, user: CurrentUser) -> None:
+def delete_comment(comment_id: UUID, session: SessionDep, _user: RequireLabeler) -> None:
     c = session.get(Comment, comment_id)
     if not c:
         raise HTTPException(404, "comment not found")
-    _check_image(session, c.image_id, user)
+    _check_image(session, c.image_id)
     session.delete(c)
     session.commit()

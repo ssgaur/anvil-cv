@@ -3,7 +3,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import func, select
 
-from anvil_api.auth import CurrentUser, SessionDep
+from anvil_api.auth import (
+    RequireAdmin,
+    RequireAnyAuthed,
+    SessionDep,
+)
 from anvil_api.models import Dataset, Image, Project
 from anvil_api.schemas import ProjectIn, ProjectOut
 from anvil_api.utils import unique_slug
@@ -29,13 +33,13 @@ def _to_out(session, p: Project) -> ProjectOut:
 
 
 @router.get("", response_model=list[ProjectOut])
-def list_projects(session: SessionDep, user: CurrentUser) -> list[ProjectOut]:
-    rows = session.exec(select(Project).where(Project.owner_id == user.id).order_by(Project.created_at.desc())).all()
+def list_projects(session: SessionDep, _user: RequireAnyAuthed) -> list[ProjectOut]:
+    rows = session.exec(select(Project).order_by(Project.created_at.desc())).all()
     return [_to_out(session, p) for p in rows]
 
 
 @router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
-def create_project(body: ProjectIn, session: SessionDep, user: CurrentUser) -> ProjectOut:
+def create_project(body: ProjectIn, session: SessionDep, user: RequireAdmin) -> ProjectOut:
     existing_slugs = set(session.exec(select(Project.slug)).all())
     p = Project(
         name=body.name,
@@ -50,17 +54,17 @@ def create_project(body: ProjectIn, session: SessionDep, user: CurrentUser) -> P
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
-def get_project(project_id: UUID, session: SessionDep, user: CurrentUser) -> ProjectOut:
+def get_project(project_id: UUID, session: SessionDep, _user: RequireAnyAuthed) -> ProjectOut:
     p = session.get(Project, project_id)
-    if not p or p.owner_id != user.id:
+    if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     return _to_out(session, p)
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_project(project_id: UUID, session: SessionDep, user: CurrentUser) -> None:
+def delete_project(project_id: UUID, session: SessionDep, _admin: RequireAdmin) -> None:
     p = session.get(Project, project_id)
-    if not p or p.owner_id != user.id:
+    if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     session.delete(p)
     session.commit()

@@ -66,6 +66,86 @@ def main() -> int:
         r = c.get("/api/auth/me")
         assert r.status_code == 401
 
+        print("\n[7a] new signup defaults to viewer role")
+        assert me["role"] == "viewer", me
+
+        print("\n[7b] viewer cannot create projects (403)")
+        r = c.post(
+            "/api/projects",
+            json={"name": "viewer-attempt"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403, r.status_code
+
+    # --- RBAC sweep: needs the bootstrap admin (defaults: admin@anvil.dev / admin) ---
+    print("\n[R1] admin login (bootstrap)")
+    r = c.post("/api/auth/login", json={"email": "admin@anvil.dev", "password": "admin"})
+    if r.status_code != 200:
+        print(f"  skip RBAC sweep: bootstrap admin login failed ({r.status_code})")
+    else:
+        admin_tok = r.json()["access_token"]
+        ah = {"Authorization": f"Bearer {admin_tok}"}
+
+        r = c.get("/api/auth/me", headers=ah); r.raise_for_status()
+        admin_me = r.json()
+        assert admin_me["role"] == "admin", admin_me
+
+        suffix = uuid.uuid4().hex[:8]
+        labeler_email = f"e2e-lab-{suffix}@example.com"
+        reviewer_email = f"e2e-rev-{suffix}@example.com"
+        passwd = "supers3cret"
+
+        print("\n[R2] admin creates labeler + reviewer")
+        r = c.post("/api/admin/users", headers=ah, json={
+            "email": labeler_email, "name": "Lab", "role": "labeler", "password": passwd,
+        }); r.raise_for_status()
+        lab_user = r.json()
+        assert lab_user["role"] == "labeler"
+        r = c.post("/api/admin/users", headers=ah, json={
+            "email": reviewer_email, "name": "Rev", "role": "reviewer", "password": passwd,
+        }); r.raise_for_status()
+        rev_user = r.json()
+
+        # Tokens
+        lab_tok = c.post("/api/auth/login", json={"email": labeler_email, "password": passwd}).json()["access_token"]
+        rev_tok = c.post("/api/auth/login", json={"email": reviewer_email, "password": passwd}).json()["access_token"]
+        lh = {"Authorization": f"Bearer {lab_tok}"}
+        rh = {"Authorization": f"Bearer {rev_tok}"}
+
+        print("\n[R3] labeler cannot create project (403)")
+        r = c.post("/api/projects", json={"name": "lab-fail"}, headers=lh)
+        assert r.status_code == 403, r.status_code
+
+        print("\n[R4] admin creates project + dataset (for review tests)")
+        r = c.post("/api/projects", json={"name": f"rbac-{suffix}"}, headers=ah); r.raise_for_status()
+        proj = r.json()
+        r = c.post(f"/api/projects/{proj['id']}/datasets",
+                   json={"name": "ds"}, headers=ah); r.raise_for_status()
+        ds = r.json()
+
+        print("\n[R5] labeler can list datasets; viewer-style read works for all authed")
+        r = c.get(f"/api/projects/{proj['id']}/datasets", headers=lh); r.raise_for_status()
+
+        print("\n[R6] /admin/users access control: labeler 403, admin OK")
+        assert c.get("/api/admin/users", headers=lh).status_code == 403
+        assert c.get("/api/admin/users", headers=ah).status_code == 200
+
+        print("\n[R7] admin cannot demote self")
+        r = c.patch(f"/api/admin/users/{admin_me['id']}", json={"role": "labeler"}, headers=ah)
+        assert r.status_code == 409, r.status_code
+
+        print("\n[R8] admin cannot delete self")
+        r = c.delete(f"/api/admin/users/{admin_me['id']}", headers=ah)
+        assert r.status_code == 409, r.status_code
+
+        print("\n[R9] cleanup created users")
+        for uid in (lab_user["id"], rev_user["id"]):
+            c.delete(f"/api/admin/users/{uid}", headers=ah)
+
+        # NOTE: full self-approve / image-lock / submit flow needs uploaded image
+        # which requires real image bytes + embeddings; out of scope for this smoke.
+        print("  (full review-flow self-approve/image-lock checks deferred to manual)")
+
     print("\n[8] OAuth login route returns 404 when provider unconfigured")
     for prov in ("google", "github"):
         if p["oauth"].get(prov):

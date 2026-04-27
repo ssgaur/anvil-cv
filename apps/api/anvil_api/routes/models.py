@@ -7,7 +7,12 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from sqlmodel import Session, select
 
-from anvil_api.auth import CurrentUser, SessionDep
+from anvil_api.auth import (
+    RequireAdmin,
+    RequireAnyAuthed,
+    RequireReviewer,
+    SessionDep,
+)
 from anvil_api.db import engine
 from anvil_api.ml_client import ml_client
 from anvil_api.models import (
@@ -25,9 +30,9 @@ from anvil_api.storage import storage
 router = APIRouter(tags=["models"])
 
 
-def _check_project(session: Session, project_id: UUID, user) -> Project:
+def _check_project(session: Session, project_id: UUID) -> Project:
     p = session.get(Project, project_id)
-    if not p or p.owner_id != user.id:
+    if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     return p
 
@@ -54,9 +59,9 @@ def _to_out(mv: ModelVersion, *, is_active: bool = False) -> ModelVersionOut:
 
 @router.get("/projects/{project_id}/model-versions", response_model=list[ModelVersionOut])
 def list_versions(
-    project_id: UUID, session: SessionDep, user: CurrentUser,
+    project_id: UUID, session: SessionDep, _user: RequireAnyAuthed,
 ) -> list[ModelVersionOut]:
-    p = _check_project(session, project_id, user)
+    p = _check_project(session, project_id)
     rows = session.exec(
         select(ModelVersion).where(ModelVersion.project_id == project_id)
         .order_by(ModelVersion.created_at.desc())
@@ -65,20 +70,20 @@ def list_versions(
 
 
 @router.get("/model-versions/{version_id}", response_model=ModelVersionOut)
-def get_version(version_id: UUID, session: SessionDep, user: CurrentUser) -> ModelVersionOut:
+def get_version(version_id: UUID, session: SessionDep, _user: RequireAnyAuthed) -> ModelVersionOut:
     mv = session.get(ModelVersion, version_id)
     if not mv:
         raise HTTPException(404, "model version not found")
-    p = _check_project(session, mv.project_id, user)
+    p = _check_project(session, mv.project_id)
     return _to_out(mv, is_active=(p.active_model_version_id == mv.id))
 
 
 @router.delete("/model-versions/{version_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_version(version_id: UUID, session: SessionDep, user: CurrentUser) -> None:
+def delete_version(version_id: UUID, session: SessionDep, _admin: RequireAdmin) -> None:
     mv = session.get(ModelVersion, version_id)
     if not mv:
         raise HTTPException(404, "model version not found")
-    p = _check_project(session, mv.project_id, user)
+    p = _check_project(session, mv.project_id)
     if mv.status == ModelVersionStatus.TRAINING:
         raise HTTPException(409, "cannot delete a model version that is currently training")
     if p.active_model_version_id == mv.id:
@@ -105,9 +110,9 @@ def create_version(
     body: ModelVersionIn,
     background: BackgroundTasks,
     session: SessionDep,
-    user: CurrentUser,
+    user: RequireAdmin,
 ) -> ModelVersionOut:
-    p = _check_project(session, project_id, user)
+    p = _check_project(session, project_id)
 
     d = session.get(Dataset, body.dataset_id)
     if not d or d.project_id != project_id:
@@ -154,9 +159,9 @@ def create_version(
 
 @router.post("/projects/{project_id}/active-model", response_model=ModelVersionOut | None)
 def set_active(
-    project_id: UUID, body: SetActiveModelIn, session: SessionDep, user: CurrentUser,
+    project_id: UUID, body: SetActiveModelIn, session: SessionDep, _r: RequireReviewer,
 ) -> ModelVersionOut | None:
-    p = _check_project(session, project_id, user)
+    p = _check_project(session, project_id)
     new_mv_id = None if body.model_version_id is None else body.model_version_id
     if new_mv_id is not None:
         mv = session.get(ModelVersion, new_mv_id)
@@ -191,11 +196,11 @@ async def compare_versions(
     project_id: UUID,
     body: CompareIn,
     session: SessionDep,
-    user: CurrentUser,
+    _r: RequireReviewer,
 ) -> dict:
     """Re-evaluate two model versions on the SAME randomly-sampled held-out set
     and return per-class IoU + deltas.  Either side may be null = base SAM2."""
-    _check_project(session, project_id, user)
+    _check_project(session, project_id)
 
     def _resolve(mv_id: UUID | None) -> tuple[str | None, str]:
         if mv_id is None:

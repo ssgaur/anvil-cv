@@ -4,6 +4,8 @@ import { Circle, Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
 import Konva from "konva";
 import { extractLargestPolygon } from "../lib/brush";
 import { api, fileUrl } from "../lib/api";
+import { useAuth } from "../store/auth";
+import { isLabeler, isReviewer } from "../lib/roles";
 import type { Annotation, ClassProperty, ClassRow, CommentRow, ImageRow, ModelVersion } from "../types";
 
 type Tool = "pan" | "auto" | "polygon" | "bbox" | "brush" | "comment";
@@ -1747,6 +1749,9 @@ const REVIEW_STYLES: Record<string, { label: string; bg: string; fg: string; dot
 
 function ReviewControls({ image, onReload }: { image: ImageRow | null; onReload: () => void | Promise<void> }) {
   const [busy, setBusy] = useState(false);
+  const role = useAuth((s) => s.user?.role);
+  const canSubmit = isLabeler(role);
+  const canReview = isReviewer(role);
   if (!image) return null;
   const st = REVIEW_STYLES[image.review_status] ?? REVIEW_STYLES.new;
 
@@ -1778,14 +1783,14 @@ function ReviewControls({ image, onReload }: { image: ImageRow | null; onReload:
         <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
         {st.label}
       </span>
-      {(status === "new" || status === "in_progress" || status === "rejected") && (
+      {canSubmit && (status === "new" || status === "in_progress" || status === "rejected") && (
         <button
           onClick={() => act("submit")} disabled={busy}
           className="text-xs bg-amber-500 hover:bg-amber-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
           title="Submit for review"
         >Submit ▸</button>
       )}
-      {status === "submitted" && (
+      {canReview && status === "submitted" && (
         <>
           <button
             onClick={() => act("approve")} disabled={busy}
@@ -1797,7 +1802,7 @@ function ReviewControls({ image, onReload }: { image: ImageRow | null; onReload:
           >✕ Reject</button>
         </>
       )}
-      {(status === "approved" || status === "rejected") && (
+      {canReview && (status === "approved" || status === "rejected") && (
         <button
           onClick={() => act("reopen")} disabled={busy}
           className="text-xs bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 text-neutral-100 px-3 py-1 rounded"

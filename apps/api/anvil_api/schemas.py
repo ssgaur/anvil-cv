@@ -44,7 +44,32 @@ class UserOut(BaseModel):
     id: UUID
     email: str
     name: str
+    role: str
     created_at: datetime
+
+
+# ---- Admin user management
+class AdminUserOut(BaseModel):
+    id: UUID
+    email: str
+    name: str
+    role: str
+    created_at: datetime
+    has_password: bool
+    oauth_providers: list[str] = []
+
+
+class AdminUserCreateIn(BaseModel):
+    email: EmailStr
+    name: str
+    password: str | None = Field(default=None, min_length=4)
+    role: str = "labeler"
+
+
+class AdminUserPatch(BaseModel):
+    name: str | None = None
+    role: str | None = None
+    password: str | None = Field(default=None, min_length=4)
 
 
 # ---- Projects

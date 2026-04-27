@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, String
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -53,6 +53,22 @@ class ReviewStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class UserRole(StrEnum):
+    """Global user role. Single tenant; no per-project ACLs in v0.
+
+    Hierarchy (most → least privileged):
+      admin    — manage users, create/delete projects, train/delete models
+      reviewer — manage taxonomy (datasets, classes), approve/reject reviews
+      labeler  — annotate, submit for review
+      viewer   — read-only across the instance
+    """
+
+    ADMIN = "admin"
+    REVIEWER = "reviewer"
+    LABELER = "labeler"
+    VIEWER = "viewer"
+
+
 class ClassPropertyType(StrEnum):
     """How a per-class attribute is captured for each annotation.
 
@@ -75,6 +91,10 @@ class User(SQLModel, table=True):
     name: str = Field(max_length=255)
     # Nullable because OAuth-only users have no local password.
     password_hash: str | None = Field(default=None)
+    role: UserRole = Field(
+        default=UserRole.LABELER,
+        sa_column=Column(String, nullable=False, server_default="labeler", index=True),
+    )
     created_at: datetime = Field(default_factory=utcnow)
 
     projects: list["Project"] = Relationship(back_populates="owner")

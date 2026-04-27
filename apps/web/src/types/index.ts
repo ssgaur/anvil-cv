@@ -1,10 +1,17 @@
 // Domain types mirroring API schemas
 
+export type UserRole = "admin" | "reviewer" | "labeler" | "viewer";
+
 export interface User {
   id: string;
   email: string;
   name: string;
+  role: UserRole;
   created_at: string;
+}
+
+export interface AdminUser extends User {
+  oauth_providers: string[];
 }
 
 export interface Project {

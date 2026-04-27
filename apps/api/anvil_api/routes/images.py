@@ -11,6 +11,7 @@ from fastapi import (
     BackgroundTasks,
     File,
     HTTPException,
+    Query,
     Response,
     UploadFile,
     status,
@@ -18,7 +19,11 @@ from fastapi import (
 from PIL import Image as PILImage
 from sqlmodel import Session, func, select
 
-from anvil_api.auth import CurrentUser, SessionDep
+from anvil_api.auth import (
+    RequireAnyAuthed,
+    RequireLabeler,
+    SessionDep,
+)
 from anvil_api.db import engine
 from anvil_api.ml_client import ml_client
 from anvil_api.models import (
@@ -33,14 +38,14 @@ from anvil_api.models import (
     ReviewStatus,
 )
 from anvil_api.schemas import ImageOut, PredictIn, PredictOut, ReviewActionIn
-from anvil_api.storage import storage
+from anvil_api.storage import storage, verify_file_signature
 
 router = APIRouter(tags=["images"])
 
 
-def _check_dataset(session: Session, project_id: UUID, dataset_id: UUID, user) -> Dataset:
+def _check_dataset(session: Session, project_id: UUID, dataset_id: UUID) -> Dataset:
     p = session.get(Project, project_id)
-    if not p or p.owner_id != user.id:
+    if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     d = session.get(Dataset, dataset_id)
     if not d or d.project_id != project_id:
@@ -91,11 +96,11 @@ async def upload_images(
     project_id: UUID,
     dataset_id: UUID,
     session: SessionDep,
-    user: CurrentUser,
+    _user: RequireLabeler,
     background: BackgroundTasks,
     files: list[UploadFile] = File(...),
 ) -> list[ImageOut]:
-    d = _check_dataset(session, project_id, dataset_id, user)
+    d = _check_dataset(session, project_id, dataset_id)
 
     out: list[Image] = []
     for f in files:
@@ -181,13 +186,13 @@ async def _embed_async(image_id: UUID) -> None:
     response_model=list[ImageOut],
 )
 def list_images(
-    project_id: UUID, dataset_id: UUID, session: SessionDep, user: CurrentUser,
+    project_id: UUID, dataset_id: UUID, session: SessionDep, _user: RequireAnyAuthed,
     status_filter: ImageStatus | None = None,
     review_status: ReviewStatus | None = None,
     limit: int = 200,
     offset: int = 0,
 ) -> list[ImageOut]:
-    _check_dataset(session, project_id, dataset_id, user)
+    _check_dataset(session, project_id, dataset_id)
     q = select(Image).where(Image.dataset_id == dataset_id)
     if status_filter:
         q = q.where(Image.status == status_filter)
@@ -198,43 +203,36 @@ def list_images(
 
 
 @router.get("/images/{image_id}", response_model=ImageOut)
-def get_image(image_id: UUID, session: SessionDep, user: CurrentUser) -> ImageOut:
+def get_image(image_id: UUID, session: SessionDep, _user: RequireAnyAuthed) -> ImageOut:
     img = session.get(Image, image_id)
     if not img:
-        raise HTTPException(404, "image not found")
-    # ownership check
-    d = session.get(Dataset, img.dataset_id)
-    p = session.get(Project, d.project_id) if d else None
-    if not p or p.owner_id != user.id:
         raise HTTPException(404, "image not found")
     return _to_out(session, img)
 
 
 # --------- Review flow (submit / approve / reject / reopen) ---------
-def _check_image_owner(session: Session, image_id: UUID, user) -> Image:
+def _get_image(session: Session, image_id: UUID) -> Image:
     img = session.get(Image, image_id)
     if not img:
-        raise HTTPException(404, "image not found")
-    d = session.get(Dataset, img.dataset_id)
-    p = session.get(Project, d.project_id) if d else None
-    if not p or p.owner_id != user.id:
         raise HTTPException(404, "image not found")
     return img
 
 
 @router.patch("/images/{image_id}/review", response_model=ImageOut)
 def review_action(
-    image_id: UUID, body: ReviewActionIn, session: SessionDep, user: CurrentUser,
+    image_id: UUID, body: ReviewActionIn, session: SessionDep, user: RequireLabeler,
 ) -> ImageOut:
     """Drive the review state machine.
 
     Valid transitions:
-      submit:  new | in_progress | rejected → submitted
-      approve: submitted                    → approved
-      reject:  submitted                    → rejected (reason required, attached as comment)
-      reopen:  approved | rejected          → in_progress
+      submit:  new | in_progress | rejected → submitted   (labeler+)
+      approve: submitted                    → approved    (reviewer+, never own work)
+      reject:  submitted                    → rejected    (reviewer+, never own work; reason required)
+      reopen:  approved | rejected          → in_progress (reviewer+)
     """
-    img = _check_image_owner(session, image_id, user)
+    from anvil_api.auth import role_at_least
+    from anvil_api.models import UserRole
+    img = _get_image(session, image_id)
     from datetime import datetime
     now = datetime.now(UTC)
     action = (body.action or "").strip().lower()
@@ -251,35 +249,63 @@ def review_action(
         img.review_status = ReviewStatus.SUBMITTED
         img.submitted_at = now
         img.submitted_by = user.id
-    elif action == "approve":
-        if img.review_status != ReviewStatus.SUBMITTED:
-            raise HTTPException(409, f"can only approve a submitted image (currently {img.review_status})")
-        img.review_status = ReviewStatus.APPROVED
-        img.reviewed_at = now
-        img.reviewed_by = user.id
-        img.review_reason = None
-    elif action == "reject":
-        if img.review_status != ReviewStatus.SUBMITTED:
-            raise HTTPException(409, f"can only reject a submitted image (currently {img.review_status})")
-        if not body.reason or not body.reason.strip():
-            raise HTTPException(400, "reject requires a reason")
-        img.review_status = ReviewStatus.REJECTED
-        img.reviewed_at = now
-        img.reviewed_by = user.id
-        img.review_reason = body.reason.strip()
-        # Attach the reason as a general comment for visibility
-        session.add(Comment(
-            image_id=img.id, author_id=user.id,
-            body=f"[Reject] {body.reason.strip()}",
-            x=None, y=None, resolved=False,
-        ))
-    elif action == "reopen":
-        if img.review_status not in (ReviewStatus.APPROVED, ReviewStatus.REJECTED):
-            raise HTTPException(409, f"cannot reopen from {img.review_status}")
-        img.review_status = ReviewStatus.IN_PROGRESS
+        # Re-submit clears any prior review verdict so stale reason/reviewer
+        # metadata doesn't bleed through.
         img.reviewed_at = None
         img.reviewed_by = None
         img.review_reason = None
+    elif action in ("approve", "reject", "reopen"):
+        # All non-submit actions require reviewer+.
+        if not role_at_least(user, UserRole.REVIEWER):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"action '{action}' requires reviewer or admin role",
+            )
+        if action == "approve":
+            if img.review_status != ReviewStatus.SUBMITTED:
+                raise HTTPException(409, f"can only approve a submitted image (currently {img.review_status})")
+            # Block self-approve: the submitter cannot also be the reviewer
+            # (admins respect this too — use a separate account if needed).
+            if img.submitted_by is not None and img.submitted_by == user.id:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "cannot approve your own submission — a different reviewer must approve",
+                )
+            img.review_status = ReviewStatus.APPROVED
+            img.reviewed_at = now
+            img.reviewed_by = user.id
+            img.review_reason = None
+        elif action == "reject":
+            if img.review_status != ReviewStatus.SUBMITTED:
+                raise HTTPException(409, f"can only reject a submitted image (currently {img.review_status})")
+            if img.submitted_by is not None and img.submitted_by == user.id:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "cannot reject your own submission — a different reviewer must review",
+                )
+            if not body.reason or not body.reason.strip():
+                raise HTTPException(400, "reject requires a reason")
+            img.review_status = ReviewStatus.REJECTED
+            img.reviewed_at = now
+            img.reviewed_by = user.id
+            img.review_reason = body.reason.strip()
+            # Attach the reason as a general comment for visibility
+            session.add(Comment(
+                image_id=img.id, author_id=user.id,
+                body=f"[Reject] {body.reason.strip()}",
+                x=None, y=None, resolved=False,
+            ))
+        else:  # reopen
+            if img.review_status not in (ReviewStatus.APPROVED, ReviewStatus.REJECTED):
+                raise HTTPException(409, f"cannot reopen from {img.review_status}")
+            img.review_status = ReviewStatus.IN_PROGRESS
+            # Reopen wipes both the review verdict AND the prior submission
+            # metadata; the next submitter will set submitted_by/at fresh.
+            img.reviewed_at = None
+            img.reviewed_by = None
+            img.review_reason = None
+            img.submitted_at = None
+            img.submitted_by = None
     else:
         raise HTTPException(400, f"unknown action: {action!r}")
     session.add(img)
@@ -290,8 +316,17 @@ def review_action(
 
 
 # --------- File serving (local provider only) ---------
+# Auth model: HMAC-signed query string (`?exp=&sig=`) so `<img src>` works
+# from the browser without an Authorization header. Signatures are minted by
+# `storage.signed_url(...)` using JWT_SECRET and verified here.
 @router.get("/files/{key:path}")
-def serve_file(key: str) -> Response:
+def serve_file(
+    key: str,
+    exp: int | None = Query(default=None),
+    sig: str | None = Query(default=None),
+) -> Response:
+    if not verify_file_signature(key, exp, sig):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "invalid or expired file signature")
     if not storage.exists(key):
         raise HTTPException(404, "not found")
     data = storage.get(key)
@@ -308,14 +343,14 @@ def serve_file(key: str) -> Response:
 # --------- Predict (auto-annotate) ---------
 @router.post("/images/{image_id}/predict", response_model=PredictOut)
 async def predict(
-    image_id: UUID, body: PredictIn, session: SessionDep, user: CurrentUser
+    image_id: UUID, body: PredictIn, session: SessionDep, _user: RequireLabeler,
 ) -> PredictOut:
     img = session.get(Image, image_id)
     if not img:
         raise HTTPException(404, "image not found")
     d = session.get(Dataset, img.dataset_id)
     p = session.get(Project, d.project_id) if d else None
-    if not p or p.owner_id != user.id:
+    if not p:
         raise HTTPException(404, "image not found")
     if img.status != ImageStatus.READY:
         raise HTTPException(409, f"image not ready (status={img.status})")
@@ -341,9 +376,11 @@ async def predict(
 
 # --------- Active learning ---------
 
-@router.get("/projects/{project_id}/datasets/{dataset_id}/next-uncertain")
+# POST because this endpoint mutates DB state (lazily scores uncertainty for
+# unscored images). Using GET would let viewers/anonymous trigger ML work.
+@router.post("/projects/{project_id}/datasets/{dataset_id}/next-uncertain")
 async def next_uncertain(
-    project_id: UUID, dataset_id: UUID, session: SessionDep, user: CurrentUser,
+    project_id: UUID, dataset_id: UUID, session: SessionDep, _user: RequireLabeler,
     batch_size: int = 10,
 ):
     """Return the un-annotated image the active model is least sure about.
@@ -352,7 +389,7 @@ async def next_uncertain(
     overall highest-uncertainty candidate in the dataset. Idempotent + cheap on
     repeat calls.
     """
-    _check_dataset(session, project_id, dataset_id, user)
+    _check_dataset(session, project_id, dataset_id)
     p = session.get(Project, project_id)
     assert p is not None
 

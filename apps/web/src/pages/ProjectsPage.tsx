@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { useAuth } from "../store/auth";
+import { isAdmin } from "../lib/roles";
 import type { Project } from "../types";
 
 export function ProjectsPage() {
+  const role = useAuth((s) => s.user?.role);
+  const admin = isAdmin(role);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
@@ -46,7 +50,7 @@ export function ProjectsPage() {
         </div>
       </header>
 
-      <form onSubmit={create} className="flex gap-2 mb-6">
+      <form onSubmit={create} className={`flex gap-2 mb-6 ${admin ? "" : "hidden"}`}>
         <input
           className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:border-emerald-500 outline-none"
           placeholder="New project name (e.g. Cucumber Defects)"
@@ -60,6 +64,9 @@ export function ProjectsPage() {
           {creating ? "..." : "Create"}
         </button>
       </form>
+      {!admin && (
+        <div className="text-xs text-neutral-500 mb-6">Only administrators can create or delete projects.</div>
+      )}
 
       {err && <div className="text-rose-400 text-sm mb-4">{err}</div>}
 
@@ -75,13 +82,15 @@ export function ProjectsPage() {
                 <Link to={`/projects/${p.id}`} className="font-medium hover:text-emerald-400">
                   {p.name}
                 </Link>
-                <button
-                  onClick={() => del(p)}
-                  className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-rose-400 text-xs"
-                  title="delete"
-                >
-                  ✕
-                </button>
+                {admin && (
+                  <button
+                    onClick={() => del(p)}
+                    className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-rose-400 text-xs"
+                    title="delete"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
               <div className="text-xs text-neutral-500 mb-3">{p.description || <em>no description</em>}</div>
               <div className="flex gap-4 text-xs text-neutral-400">

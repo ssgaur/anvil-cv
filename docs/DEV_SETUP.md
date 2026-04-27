@@ -135,6 +135,36 @@ On first boot, Anvil seeds an admin from `ANVIL_ADMIN_EMAIL` /
 `ANVIL_ADMIN_BOOTSTRAP=false` to skip auto-creation entirely (use OAuth or
 `/api/auth/signup` instead).
 
+If a user with `ANVIL_ADMIN_EMAIL` already exists with a non-admin role, the
+bootstrap idempotently **promotes** them to admin on every API start
+(break-glass mechanism — keep the env var unset in production after initial
+setup if you don't want this).
+
+### Roles (RBAC)
+
+Single global role per user. Hierarchy (most → least privileged):
+
+| Role     | Can do                                                                |
+| -------- | --------------------------------------------------------------------- |
+| admin    | Manage users (`/admin/users`), create/delete projects, train/delete models |
+| reviewer | Manage datasets/classes; approve/reject submissions; set active model |
+| labeler  | Annotate, comment, submit images for review                           |
+| viewer   | Read-only across the instance                                         |
+
+Key invariants:
+
+- New signups default to **viewer** (configure with `ANVIL_DEFAULT_SIGNUP_ROLE`).
+  Admins must promote users via `/admin/users` (UI: sidebar → **Users**).
+- Reviewers cannot approve/reject their **own submissions** (returns `409`).
+- Annotation/comment writes are **locked** when an image is `submitted` or
+  `approved`. A reviewer must `reopen` it first.
+- File downloads use **HMAC-signed URLs** (`?exp=&sig=`, 1 h expiry) so
+  `<img src>` works without an Authorization header.
+- The last admin cannot be demoted or deleted (`SELECT FOR UPDATE` race-safe).
+- Hard-deleting a user is blocked while they have FK references (projects,
+  annotations, comments, model versions, images) — reassign or remove those
+  first.
+
 ### Production guardrails
 
 When `ANVIL_ENV=production`, the API refuses to start if:

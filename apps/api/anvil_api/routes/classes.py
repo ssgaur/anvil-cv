@@ -3,7 +3,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import func, select
 
-from anvil_api.auth import CurrentUser, SessionDep
+from anvil_api.auth import (
+    RequireAnyAuthed,
+    RequireReviewer,
+    SessionDep,
+)
 from anvil_api.models import Annotation, Class, ClassProperty, Project
 from anvil_api.schemas import (
     ClassIn,
@@ -47,9 +51,9 @@ PALETTE = [
 ]
 
 
-def _check(session, project_id: UUID, user) -> Project:
+def _check(session, project_id: UUID) -> Project:
     p = session.get(Project, project_id)
-    if not p or p.owner_id != user.id:
+    if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     return p
 
@@ -63,15 +67,15 @@ def _to_out(session, c: Class) -> ClassOut:
 
 
 @router.get("", response_model=list[ClassOut])
-def list_classes(project_id: UUID, session: SessionDep, user: CurrentUser) -> list[ClassOut]:
-    _check(session, project_id, user)
+def list_classes(project_id: UUID, session: SessionDep, _user: RequireAnyAuthed) -> list[ClassOut]:
+    _check(session, project_id)
     rows = session.exec(select(Class).where(Class.project_id == project_id).order_by(Class.created_at)).all()
     return [_to_out(session, c) for c in rows]
 
 
 @router.post("", response_model=ClassOut, status_code=status.HTTP_201_CREATED)
-def create_class(project_id: UUID, body: ClassIn, session: SessionDep, user: CurrentUser) -> ClassOut:
-    _check(session, project_id, user)
+def create_class(project_id: UUID, body: ClassIn, session: SessionDep, _r: RequireReviewer) -> ClassOut:
+    _check(session, project_id)
     n_existing = session.exec(
         select(func.count()).select_from(Class).where(Class.project_id == project_id)
     ).one()
@@ -87,8 +91,8 @@ def create_class(project_id: UUID, body: ClassIn, session: SessionDep, user: Cur
 
 
 @router.delete("/{class_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_class(project_id: UUID, class_id: UUID, session: SessionDep, user: CurrentUser) -> None:
-    _check(session, project_id, user)
+def delete_class(project_id: UUID, class_id: UUID, session: SessionDep, _r: RequireReviewer) -> None:
+    _check(session, project_id)
     c = session.get(Class, class_id)
     if not c or c.project_id != project_id:
         raise HTTPException(404, "class not found")
@@ -99,9 +103,9 @@ def delete_class(project_id: UUID, class_id: UUID, session: SessionDep, user: Cu
 @router.patch("/{class_id}", response_model=ClassOut)
 def update_class(
     project_id: UUID, class_id: UUID, body: ClassPatch,
-    session: SessionDep, user: CurrentUser,
+    session: SessionDep, _r: RequireReviewer,
 ) -> ClassOut:
-    _check(session, project_id, user)
+    _check(session, project_id)
     c = session.get(Class, class_id)
     if not c or c.project_id != project_id:
         raise HTTPException(404, "class not found")
@@ -123,8 +127,8 @@ def update_class(
 
 # ---------- Class properties ----------
 
-def _check_class(session, project_id: UUID, class_id: UUID, user) -> Class:
-    _check(session, project_id, user)
+def _check_class(session, project_id: UUID, class_id: UUID) -> Class:
+    _check(session, project_id)
     c = session.get(Class, class_id)
     if not c or c.project_id != project_id:
         raise HTTPException(404, "class not found")
@@ -140,9 +144,9 @@ def _cp_out(cp: ClassProperty) -> ClassPropertyOut:
 
 @router.get("/{class_id}/properties", response_model=list[ClassPropertyOut])
 def list_class_properties(
-    project_id: UUID, class_id: UUID, session: SessionDep, user: CurrentUser,
+    project_id: UUID, class_id: UUID, session: SessionDep, _user: RequireAnyAuthed,
 ) -> list[ClassPropertyOut]:
-    _check_class(session, project_id, class_id, user)
+    _check_class(session, project_id, class_id)
     rows = session.exec(
         select(ClassProperty).where(ClassProperty.class_id == class_id)
         .order_by(ClassProperty.sort_order, ClassProperty.created_at)
@@ -157,9 +161,9 @@ def list_class_properties(
 )
 def create_class_property(
     project_id: UUID, class_id: UUID, body: ClassPropertyIn,
-    session: SessionDep, user: CurrentUser,
+    session: SessionDep, _r: RequireReviewer,
 ) -> ClassPropertyOut:
-    _check_class(session, project_id, class_id, user)
+    _check_class(session, project_id, class_id)
     if not body.name.strip():
         raise HTTPException(400, "name cannot be empty")
     cp = ClassProperty(
@@ -180,9 +184,9 @@ def create_class_property(
 def update_class_property(
     project_id: UUID, class_id: UUID, property_id: UUID,
     body: ClassPropertyPatch,
-    session: SessionDep, user: CurrentUser,
+    session: SessionDep, _r: RequireReviewer,
 ) -> ClassPropertyOut:
-    _check_class(session, project_id, class_id, user)
+    _check_class(session, project_id, class_id)
     cp = session.get(ClassProperty, property_id)
     if not cp or cp.class_id != class_id:
         raise HTTPException(404, "property not found")
@@ -210,9 +214,9 @@ def update_class_property(
 )
 def delete_class_property(
     project_id: UUID, class_id: UUID, property_id: UUID,
-    session: SessionDep, user: CurrentUser,
+    session: SessionDep, _r: RequireReviewer,
 ) -> None:
-    _check_class(session, project_id, class_id, user)
+    _check_class(session, project_id, class_id)
     cp = session.get(ClassProperty, property_id)
     if not cp or cp.class_id != class_id:
         raise HTTPException(404, "property not found")

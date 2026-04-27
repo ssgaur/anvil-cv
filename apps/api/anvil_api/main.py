@@ -9,6 +9,7 @@ from anvil_api.auth import bootstrap_admin
 from anvil_api.config import settings
 from anvil_api.db import engine, init_db
 from anvil_api.routes import (
+    admin,
     annotations,
     auth,
     classes,
@@ -49,6 +50,7 @@ app.include_router(classes.router, prefix=API)
 app.include_router(annotations.router, prefix=API)
 app.include_router(comments.router, prefix=API)
 app.include_router(models.router, prefix=API)
+app.include_router(admin.router, prefix=API)
 
 
 @app.get("/health")

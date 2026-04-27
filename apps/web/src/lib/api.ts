@@ -1,5 +1,5 @@
 import type {
-  Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, CompareResult, Dataset, ImageRow, ModelVersion, PredictResponse, Project, ReviewStatus, User,
+  AdminUser, Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, CompareResult, Dataset, ImageRow, ModelVersion, PredictResponse, Project, ReviewStatus, User, UserRole,
 } from "../types";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -273,5 +273,16 @@ export const api = {
   nextUncertain: (projectId: string, datasetId: string) =>
     req<{ scored_now: number; image: ImageRow | null }>(
       `/api/projects/${projectId}/datasets/${datasetId}/next-uncertain`,
+      { method: "POST" },
     ),
+
+  // Admin: user management
+  adminListUsers: () => req<AdminUser[]>(`/api/admin/users`),
+  adminCreateUser: (body: { email: string; name: string; role: UserRole; password?: string }) =>
+    req<AdminUser>(`/api/admin/users`, { method: "POST", body: JSON.stringify(body) }),
+  adminGetUser: (id: string) => req<AdminUser>(`/api/admin/users/${id}`),
+  adminPatchUser: (id: string, body: { name?: string; role?: UserRole; password?: string }) =>
+    req<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  adminDeleteUser: (id: string) =>
+    req<void>(`/api/admin/users/${id}`, { method: "DELETE" }),
 };

@@ -35,7 +35,7 @@ from sqlmodel import select
 
 from anvil_api.auth import SessionDep, make_token, normalize_email
 from anvil_api.config import settings
-from anvil_api.models import User, UserOAuthIdentity
+from anvil_api.models import User, UserOAuthIdentity, UserRole
 
 router = APIRouter(prefix="/auth/oauth", tags=["auth"])
 
@@ -264,7 +264,11 @@ def _upsert_oauth_user(
 
     user = session.exec(select(User).where(User.email == email_n)).first()
     if user is None:
-        user = User(email=email_n, name=name, password_hash=None)
+        try:
+            new_role = UserRole(settings.default_signup_role.lower())
+        except ValueError:
+            new_role = UserRole.VIEWER
+        user = User(email=email_n, name=name, password_hash=None, role=new_role)
         session.add(user)
         session.commit()
         session.refresh(user)

@@ -10,10 +10,18 @@ from anvil_api.auth import (
     verify_password,
 )
 from anvil_api.config import settings
-from anvil_api.models import User
+from anvil_api.models import User, UserRole
 from anvil_api.schemas import LoginIn, ProvidersOut, SignupIn, TokenOut, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _resolve_default_signup_role() -> UserRole:
+    """Map config string → UserRole; falls back to VIEWER on bad input."""
+    try:
+        return UserRole(settings.default_signup_role.lower())
+    except ValueError:
+        return UserRole.VIEWER
 
 
 @router.get("/providers", response_model=ProvidersOut)
@@ -37,7 +45,12 @@ def signup(body: SignupIn, session: SessionDep) -> TokenOut:
     existing = session.exec(select(User).where(User.email == email)).first()
     if existing:
         raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
-    user = User(email=email, name=body.name, password_hash=hash_password(body.password))
+    user = User(
+        email=email,
+        name=body.name,
+        password_hash=hash_password(body.password),
+        role=_resolve_default_signup_role(),
+    )
     session.add(user)
     session.commit()
     session.refresh(user)
@@ -56,4 +69,8 @@ def login(body: LoginIn, session: SessionDep) -> TokenOut:
 
 @router.get("/me", response_model=UserOut)
 def me(user: CurrentUser) -> UserOut:
-    return UserOut(id=user.id, email=user.email, name=user.name, created_at=user.created_at)
+    return UserOut(
+        id=user.id, email=user.email, name=user.name,
+        role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        created_at=user.created_at,
+    )

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Layout } from "./components/Layout";
+import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { DatasetDetailPage } from "./pages/DatasetDetailPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -36,6 +37,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               path="/projects/:projectId/datasets/:datasetId"
               element={<DatasetDetailPage />}
             />
+            <Route path="/admin/users" element={<AdminUsersPage />} />
             <Route path="*" element={<div className="p-8 text-neutral-500">Not found</div>} />
           </Route>
         </Route>

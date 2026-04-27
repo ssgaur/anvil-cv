@@ -3,7 +3,12 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import func, select
 
-from anvil_api.auth import CurrentUser, SessionDep
+from anvil_api.auth import (
+    RequireAnyAuthed,
+    RequireLabeler,
+    RequireReviewer,
+    SessionDep,
+)
 from anvil_api.models import Dataset, Image, ImageStatus, Project
 from anvil_api.schemas import DatasetIn, DatasetOut
 from anvil_api.utils import unique_slug
@@ -11,9 +16,13 @@ from anvil_api.utils import unique_slug
 router = APIRouter(prefix="/projects/{project_id}/datasets", tags=["datasets"])
 
 
-def _check(session, project_id: UUID, user) -> Project:
+def _check(session, project_id: UUID) -> Project:
+    """Resolve a project by id; 404 if missing.
+
+    No ownership check — RBAC is enforced via role dependencies on the route.
+    """
     p = session.get(Project, project_id)
-    if not p or p.owner_id != user.id:
+    if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     return p
 
@@ -34,8 +43,8 @@ def _to_out(session, d: Dataset) -> DatasetOut:
 
 
 @router.get("", response_model=list[DatasetOut])
-def list_datasets(project_id: UUID, session: SessionDep, user: CurrentUser) -> list[DatasetOut]:
-    _check(session, project_id, user)
+def list_datasets(project_id: UUID, session: SessionDep, _user: RequireAnyAuthed) -> list[DatasetOut]:
+    _check(session, project_id)
     rows = session.exec(
         select(Dataset).where(Dataset.project_id == project_id).order_by(Dataset.created_at.desc())
     ).all()
@@ -43,8 +52,8 @@ def list_datasets(project_id: UUID, session: SessionDep, user: CurrentUser) -> l
 
 
 @router.post("", response_model=DatasetOut, status_code=status.HTTP_201_CREATED)
-def create_dataset(project_id: UUID, body: DatasetIn, session: SessionDep, user: CurrentUser) -> DatasetOut:
-    _check(session, project_id, user)
+def create_dataset(project_id: UUID, body: DatasetIn, session: SessionDep, _r: RequireReviewer) -> DatasetOut:
+    _check(session, project_id)
     existing = set(session.exec(
         select(Dataset.slug).where(Dataset.project_id == project_id)
     ).all())
@@ -56,8 +65,8 @@ def create_dataset(project_id: UUID, body: DatasetIn, session: SessionDep, user:
 
 
 @router.get("/{dataset_id}", response_model=DatasetOut)
-def get_dataset(project_id: UUID, dataset_id: UUID, session: SessionDep, user: CurrentUser) -> DatasetOut:
-    _check(session, project_id, user)
+def get_dataset(project_id: UUID, dataset_id: UUID, session: SessionDep, _user: RequireAnyAuthed) -> DatasetOut:
+    _check(session, project_id)
     d = session.get(Dataset, dataset_id)
     if not d or d.project_id != project_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "dataset not found")
@@ -65,8 +74,8 @@ def get_dataset(project_id: UUID, dataset_id: UUID, session: SessionDep, user: C
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_dataset(project_id: UUID, dataset_id: UUID, session: SessionDep, user: CurrentUser) -> None:
-    _check(session, project_id, user)
+def delete_dataset(project_id: UUID, dataset_id: UUID, session: SessionDep, _r: RequireReviewer) -> None:
+    _check(session, project_id)
     d = session.get(Dataset, dataset_id)
     if not d or d.project_id != project_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "dataset not found")
@@ -115,7 +124,7 @@ def _polygon_area(points: list[list[float]]) -> float:
 
 @router.get("/{dataset_id}/export/coco")
 def export_coco(
-    project_id: UUID, dataset_id: UUID, session: SessionDep, user: CurrentUser,
+    project_id: UUID, dataset_id: UUID, session: SessionDep, _r: RequireReviewer,
     include_images: bool = True,
     review_status: str | None = None,
 ) -> Response:
@@ -133,7 +142,7 @@ def export_coco(
     Pass `?review_status=approved` to ship only reviewer-approved images
     (recommended for production exports).
     """
-    p = _check(session, project_id, user)
+    p = _check(session, project_id)
     d = session.get(Dataset, dataset_id)
     if not d or d.project_id != project_id:
         raise HTTPException(404, "dataset not found")
@@ -295,7 +304,7 @@ def _coco_segmentation_to_points(seg) -> list[list[float]] | None:
 @router.post("/{dataset_id}/import/coco")
 async def import_coco(
     project_id: UUID, dataset_id: UUID,
-    session: SessionDep, user: CurrentUser, background: BackgroundTasks,
+    session: SessionDep, _user: RequireLabeler, background: BackgroundTasks,
     file: UploadFile = File(...),
 ) -> dict:
     """Import a COCO instance-segmentation ZIP into this dataset.
@@ -314,7 +323,7 @@ async def import_coco(
         supported yet) and counted in the response
       - Filenames not present in the zip are skipped (counted)
     """
-    _check(session, project_id, user)
+    _check(session, project_id)
     d = session.get(Dataset, dataset_id)
     if not d or d.project_id != project_id:
         raise HTTPException(404, "dataset not found")

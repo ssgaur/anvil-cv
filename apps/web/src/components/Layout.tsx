@@ -1,8 +1,10 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../store/auth";
+import { isAdmin } from "../lib/roles";
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const admin = isAdmin(user?.role);
 
   return (
     <div className="h-screen flex bg-neutral-950 text-neutral-100">
@@ -15,9 +17,13 @@ export function Layout() {
           <SideLink to="/projects" label="Projects" icon="📁" />
           <SideLink to="/models" label="Models" icon="🧠" disabled />
           <SideLink to="/quality" label="Quality" icon="📊" disabled />
+          {admin && <SideLink to="/admin/users" label="Users" icon="👥" />}
         </nav>
         <div className="p-3 border-t border-neutral-800 text-xs text-neutral-400">
           <div className="truncate">{user?.email}</div>
+          {user?.role && (
+            <div className="text-[10px] uppercase tracking-wider text-neutral-600">{user.role}</div>
+          )}
           <button
             onClick={logout}
             className="mt-2 text-neutral-500 hover:text-neutral-200"
