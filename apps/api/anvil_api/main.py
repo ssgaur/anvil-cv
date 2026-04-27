@@ -1,13 +1,19 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from sqlmodel import Session
 
 from anvil_api import __version__
 from anvil_api.auth import bootstrap_admin
 from anvil_api.config import settings
 from anvil_api.db import engine, init_db
+from anvil_api.observability import (
+    MetricsMiddleware,
+    configure_logging,
+    render_metrics,
+)
 from anvil_api.routes import (
     admin,
     annotations,
@@ -25,6 +31,7 @@ from anvil_api.routes import (
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    configure_logging(level="INFO")
     init_db()
     with Session(engine) as s:
         bootstrap_admin(s)
@@ -46,6 +53,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Anvil API", version=__version__, lifespan=lifespan)
+
+app.add_middleware(MetricsMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,6 +81,25 @@ app.include_router(setup.router, prefix=API)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
+
+
+@app.get("/ready")
+def ready() -> Response:
+    """Liveness vs readiness: /health is liveness; /ready also pings the DB."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        return Response(
+            content=f'{{"status":"not_ready","error":"{type(e).__name__}"}}',
+            media_type="application/json", status_code=503,
+        )
+    return Response(content='{"status":"ready"}', media_type="application/json")
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(content=render_metrics(), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/")
