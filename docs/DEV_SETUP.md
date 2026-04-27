@@ -242,3 +242,44 @@ Anvil only links by **provider-verified** email:
   `GET /user/emails`.
 
 Unverified emails are rejected with a redirect back to `/login?oauth_error=...`.
+
+## Observability
+
+The API exposes three operational endpoints:
+
+- `GET /health` — liveness; cheap, no DB I/O. Returns `{"status":"ok"}`.
+- `GET /ready` — readiness; pings Postgres. Returns 503 with a JSON body if
+  the DB is unreachable. Use this for k8s readiness probes / load-balancer
+  health checks.
+- `GET /metrics` — Prometheus text exposition. Counters
+  (`anvil_http_requests_total`) and histograms
+  (`anvil_http_request_duration_seconds`) by method/route/status. In-process,
+  no client dependency; for multi-replica deployments aggregate via a
+  scrape proxy.
+
+Logs are emitted as one JSON object per line on stdout (`anvil_api.observability.JsonFormatter`).
+The default uvicorn access log is suppressed in favor of the per-request line
+emitted by the metrics middleware (skipped for `/metrics`, `/health`, `/ready`
+to keep noise down).
+
+## Backup & restore
+
+`scripts/backup.sh` and `scripts/restore.sh` snapshot the full Anvil state
+(Postgres + MinIO bucket) into a single `.tar.gz`. They shell into the
+running compose containers, no extra deps required.
+
+```bash
+# back up to a timestamped file under ./backups/
+scripts/backup.sh
+
+# or to a specific path
+scripts/backup.sh /path/to/snapshot.tar.gz
+
+# restore (interactive: type YES to confirm; or set ANVIL_RESTORE_FORCE=1)
+scripts/restore.sh /path/to/snapshot.tar.gz
+docker compose restart api
+```
+
+The archive contains `manifest.json`, a `db.sql` dump (`pg_dump --no-owner --no-privileges`),
+and a mirrored `storage/` directory of the bucket. Restore drops + recreates
+the database and overwrites the bucket — it is intentionally destructive.
