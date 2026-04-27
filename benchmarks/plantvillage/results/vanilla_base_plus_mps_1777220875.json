@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "config": "vanilla",
+    "variant": "base_plus",
+    "device": "mps",
+    "device_name": "Apple Silicon (arm64)",
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "n_train": 500,
+    "n_eval": 100,
+    "max_steps": 0,
+    "started_utc": "2026-04-26T16:27:55Z"
+  },
+  "n_trainable": 0,
+  "pre_train_mean_iou": 0.7832276973414817,
+  "pre_train_per_class_iou": {
+    "Strawberry": 0.7537896431654691,
+    "Potato": 0.7504229008273094,
+    "Apple": 0.8180350542869321,
+    "Grape": 0.7807685087524271,
+    "Tomato": 0.8199282119104158
+  },
+  "loss_per_step": [],
+  "wall_seconds": 0.0,
+  "peak_memory_gb": 0.0,
+  "post_train_mean_iou": 0.7832276973414817,
+  "post_train_per_class_iou": {
+    "Strawberry": 0.7537896431654691,
+    "Potato": 0.7504229008273094,
+    "Apple": 0.8180350542869321,
+    "Grape": 0.7807685087524271,
+    "Tomato": 0.8199282119104158
+  }
+}
