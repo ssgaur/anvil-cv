@@ -15,16 +15,32 @@ export function DatasetDetailPage() {
   const [importing, setImporting] = useState(false);
   const [filter, setFilter] = useState<"all" | "ready" | "uploaded" | "embedding" | "failed">("all");
   const [reviewFilter, setReviewFilter] = useState<"all" | ReviewStatus>("all");
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const PAGE = 200;
 
   const reload = useCallback(async () => {
-    const [d, imgs] = await Promise.all([
+    const [d, paged] = await Promise.all([
       api.getDataset(projectId, datasetId),
-      api.listImages(projectId, datasetId, { limit: 500 }),
+      api.listImagesPaged(projectId, datasetId, { limit: PAGE, offset: 0 }),
     ]);
-    setDataset(d); setImages(imgs);
+    setDataset(d); setImages(paged.items); setTotal(paged.total);
   }, [projectId, datasetId]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  async function loadMore() {
+    if (loadingMore || images.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const paged = await api.listImagesPaged(projectId, datasetId, { limit: PAGE, offset: images.length });
+      setImages((prev) => [...prev, ...paged.items]);
+      setTotal(paged.total);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   // Auto-poll while embeddings are in progress
   useEffect(() => {
@@ -223,10 +239,28 @@ export function DatasetDetailPage() {
             : `No images match filter "${filter}".`}
         </div>
       ) : (
-        <div className="p-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {filtered.map((img) => (
-            <ImageCard key={img.id} img={img} projectId={projectId} datasetId={datasetId} />
-          ))}
+        <div className="p-8">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {filtered.map((img) => (
+              <ImageCard key={img.id} img={img} projectId={projectId} datasetId={datasetId} />
+            ))}
+          </div>
+          {images.length < total && (
+            <div className="mt-6 flex justify-center">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-100 px-5 py-2 rounded text-sm border border-neutral-700"
+              >
+                {loadingMore ? "Loading…" : `Load more (${images.length} of ${total})`}
+              </button>
+            </div>
+          )}
+          {images.length >= total && total > PAGE && (
+            <div className="mt-6 text-center text-xs text-neutral-500">
+              Showing all {total} images
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -256,7 +290,9 @@ function ImageCard({ img, projectId, datasetId }: { img: ImageRow; projectId: st
     >
       <div className="relative aspect-square bg-neutral-950 overflow-hidden">
         {img.thumbnail_url ? (
-          <img src={fileUrl(img.thumbnail_url)} alt={img.filename} className="w-full h-full object-cover" />
+          <img src={fileUrl(img.thumbnail_url)} alt={img.filename}
+               loading="lazy" decoding="async"
+               className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full grid place-items-center text-neutral-700 text-xs">no preview</div>
         )}

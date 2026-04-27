@@ -187,18 +187,24 @@ async def _embed_async(image_id: UUID) -> None:
 )
 def list_images(
     project_id: UUID, dataset_id: UUID, session: SessionDep, _user: RequireAnyAuthed,
+    response: Response,
     status_filter: ImageStatus | None = None,
     review_status: ReviewStatus | None = None,
     limit: int = 200,
     offset: int = 0,
 ) -> list[ImageOut]:
     _check_dataset(session, project_id, dataset_id)
-    q = select(Image).where(Image.dataset_id == dataset_id)
+    base = select(Image).where(Image.dataset_id == dataset_id)
     if status_filter:
-        q = q.where(Image.status == status_filter)
+        base = base.where(Image.status == status_filter)
     if review_status:
-        q = q.where(Image.review_status == review_status)
-    q = q.order_by(Image.uploaded_at).offset(offset).limit(limit)
+        base = base.where(Image.review_status == review_status)
+    total = session.exec(
+        select(func.count()).select_from(base.subquery())
+    ).one()
+    response.headers["X-Total-Count"] = str(int(total))
+    response.headers["Access-Control-Expose-Headers"] = "X-Total-Count"
+    q = base.order_by(Image.uploaded_at).offset(offset).limit(limit)
     return [_to_out(session, i) for i in session.exec(q).all()]
 
 

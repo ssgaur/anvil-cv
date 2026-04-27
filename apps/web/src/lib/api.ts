@@ -131,6 +131,27 @@ export const api = {
       `/api/projects/${projectId}/datasets/${datasetId}/images${qs ? `?${qs}` : ""}`,
     );
   },
+  /** Paginated variant returning {items,total} (uses X-Total-Count header). */
+  listImagesPaged: async (
+    projectId: string, datasetId: string,
+    opts?: { status?: string; review_status?: ReviewStatus; limit?: number; offset?: number },
+  ): Promise<{ items: ImageRow[]; total: number }> => {
+    const q = new URLSearchParams();
+    if (opts?.status) q.set("status_filter", opts.status);
+    if (opts?.review_status) q.set("review_status", opts.review_status);
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    if (opts?.offset) q.set("offset", String(opts.offset));
+    const qs = q.toString();
+    const t = token();
+    const r = await fetch(
+      `${API}/api/projects/${projectId}/datasets/${datasetId}/images${qs ? `?${qs}` : ""}`,
+      { headers: t ? { Authorization: `Bearer ${t}` } : {} },
+    );
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const items = (await r.json()) as ImageRow[];
+    const total = parseInt(r.headers.get("X-Total-Count") ?? String(items.length), 10);
+    return { items, total: Number.isFinite(total) ? total : items.length };
+  },
   uploadImages: (projectId: string, datasetId: string, files: File[]) => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
