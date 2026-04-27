@@ -47,6 +47,14 @@ def providers() -> ProvidersOut:
 def signup(body: SignupIn, session: SessionDep) -> TokenOut:
     if not settings.allow_signup:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "signup is disabled on this deployment")
+    # Block signups while no admin exists — otherwise we'd accumulate orphan
+    # viewer accounts that no one can promote. Operator must run setup first.
+    from anvil_api.routes.setup import needs_setup as _needs_setup
+    if _needs_setup(session):
+        raise HTTPException(
+            status.HTTP_423_LOCKED,
+            "instance not set up yet — visit /setup to create the first admin",
+        )
     email = normalize_email(body.email)
     existing = session.exec(select(User).where(User.email == email)).first()
     if existing:

@@ -16,7 +16,31 @@ API = "http://127.0.0.1:8000"
 def main() -> int:
     c = httpx.Client(base_url=API, timeout=30.0, follow_redirects=False)
 
-    print("[1] GET /api/auth/providers")
+    print("[0] GET /api/setup/status")
+    r = c.get("/api/setup/status"); r.raise_for_status()
+    setup = r.json()
+    print(f"  {setup}")
+    assert "needs_setup" in setup
+    if setup["needs_setup"]:
+        print("  → wizard required; creating first admin via /api/setup/initialize")
+        first_admin_email = f"setup-admin-{uuid.uuid4().hex[:8]}@example.com"
+        r = c.post("/api/setup/initialize", json={
+            "email": first_admin_email, "name": "Setup Admin", "password": "supers3cret",
+        }); r.raise_for_status()
+        # Second call must 409
+        r2 = c.post("/api/setup/initialize", json={
+            "email": "other@example.com", "name": "Other", "password": "supers3cret",
+        })
+        assert r2.status_code == 409, r2.status_code
+        print("  setup completed; second initialize returns 409 ✓")
+    else:
+        print("  setup already completed; second initialize returns 409")
+        r = c.post("/api/setup/initialize", json={
+            "email": "x@example.com", "name": "X", "password": "supers3cret",
+        })
+        assert r.status_code == 409, r.status_code
+
+    print("\n[1] GET /api/auth/providers")
     r = c.get("/api/auth/providers")
     r.raise_for_status()
     p = r.json()

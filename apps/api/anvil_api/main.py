@@ -19,6 +19,7 @@ from anvil_api.routes import (
     models,
     oauth,
     projects,
+    setup,
 )
 
 
@@ -27,6 +28,20 @@ async def lifespan(_app: FastAPI):
     init_db()
     with Session(engine) as s:
         bootstrap_admin(s)
+        # If an admin already exists (bootstrap or otherwise), mark setup
+        # as completed so the public /setup endpoint stays closed even after
+        # admin deletion (admin-recovery is an out-of-band operation).
+        from datetime import datetime as _dt
+
+        from sqlmodel import select as _select
+
+        from anvil_api.models import InstanceState, User, UserRole
+        admin_seen = s.exec(
+            _select(User.id).where(User.role == UserRole.ADMIN.value).limit(1)
+        ).first()
+        if admin_seen is not None and s.get(InstanceState, "setup_completed_at") is None:
+            s.merge(InstanceState(key="setup_completed_at", value=_dt.utcnow().isoformat()))
+            s.commit()
     yield
 
 
@@ -51,6 +66,7 @@ app.include_router(annotations.router, prefix=API)
 app.include_router(comments.router, prefix=API)
 app.include_router(models.router, prefix=API)
 app.include_router(admin.router, prefix=API)
+app.include_router(setup.router, prefix=API)
 
 
 @app.get("/health")

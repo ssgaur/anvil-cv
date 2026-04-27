@@ -123,6 +123,17 @@ class UserOAuthIdentity(SQLModel, table=True):
     user: User = Relationship(back_populates="oauth_identities")
 
 
+class InstanceState(SQLModel, table=True):
+    """Singleton-style key/value table for instance-wide flags (e.g. setup
+    completion marker). Avoids a dedicated migration for every new flag."""
+
+    __tablename__ = "instance_state"
+
+    key: str = Field(primary_key=True, max_length=64)
+    value: str | None = Field(default=None)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class Project(SQLModel, table=True):
     __tablename__ = "projects"
 

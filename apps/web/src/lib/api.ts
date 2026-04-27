@@ -285,4 +285,14 @@ export const api = {
     req<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   adminDeleteUser: (id: string) =>
     req<void>(`/api/admin/users/${id}`, { method: "DELETE" }),
+
+  // First-run setup wizard
+  setupStatus: () => req<{ needs_setup: boolean }>(`/api/setup/status`),
+  setupInitialize: async (body: { email: string; name: string; password: string }) => {
+    const r = await req<{ access_token: string }>(
+      `/api/setup/initialize`, { method: "POST", body: JSON.stringify(body) },
+    );
+    setToken(r.access_token);
+    return r;
+  },
 };
