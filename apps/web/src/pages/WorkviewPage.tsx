@@ -448,6 +448,13 @@ export function WorkviewPage() {
         if (hoverAnnId) deleteAnnotation(hoverAnnId);
       } else if (e.key === "ArrowRight") gotoSibling(1);
       else if (e.key === "ArrowLeft") gotoSibling(-1);
+      else if (e.key === "+" || e.key === "=") { zoomBy(1.25); }
+      else if (e.key === "-" || e.key === "_") { zoomBy(0.8); }
+      else if (/^[1-9]$/.test(e.key)) {
+        const idx = parseInt(e.key, 10) - 1;
+        const c = classes[idx];
+        if (c) setActiveClassId(c.id);
+      }
     }
     function ku(e: KeyboardEvent) {
       if (e.key === " " || e.code === "Space") setSpacePan(false);
@@ -462,7 +469,7 @@ export function WorkviewPage() {
       window.removeEventListener("blur", blur);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp]);
+  }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp, classes]);
 
   // Helpers
   function imagePoint(stageX: number, stageY: number): [number, number] {
@@ -474,6 +481,17 @@ export function WorkviewPage() {
     const idx = siblings.findIndex((s) => s.id === imageId);
     const next = siblings[(idx + delta + siblings.length) % siblings.length];
     if (next) nav(`/projects/${projectId}/datasets/${datasetId}/workview/${next.id}`);
+  }
+
+  // Centered zoom by factor (used by +/- shortcuts).
+  function zoomBy(factor: number) {
+    const oldScale = view.scale;
+    const newScale = Math.max(0.05, Math.min(20, oldScale * factor));
+    const cx = stageSize.w / 2;
+    const cy = stageSize.h / 2;
+    const mx = (cx - view.x) / oldScale;
+    const my = (cy - view.y) / oldScale;
+    setView({ scale: newScale, x: cx - mx * newScale, y: cy - my * newScale });
   }
 
   // Wheel zoom
@@ -1528,6 +1546,8 @@ const SHORTCUT_GROUPS: { title: string; rows: [string, string][] }[] = [
       ["P", "Polygon"],
       ["B", "Bounding box"],
       ["R", "Brush"],
+      ["T", "Comment pin"],
+      ["1–9", "Pick class by index"],
     ],
   },
   {
@@ -1537,6 +1557,7 @@ const SHORTCUT_GROUPS: { title: string; rows: [string, string][] }[] = [
       ["Scroll", "Zoom in / out at cursor"],
       ["F", "Fit image to screen"],
       ["0", "Reset to 100%"],
+      ["+ / -", "Zoom in / out"],
       ["← / →", "Previous / next image"],
     ],
   },
