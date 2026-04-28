@@ -8,7 +8,7 @@ from anvil_api.auth import (
     RequireReviewer,
     SessionDep,
 )
-from anvil_api.models import Annotation, Class, ClassProperty, Project
+from anvil_api.models import Annotation, Class, ClassProperty, GeometryType, Project
 from anvil_api.schemas import (
     ClassIn,
     ClassOut,
@@ -19,6 +19,8 @@ from anvil_api.schemas import (
 )
 
 router = APIRouter(prefix="/projects/{project_id}/classes", tags=["classes"])
+
+MAX_HIERARCHY_DEPTH = 5
 
 PALETTE = [
     # Curated for AA contrast against #0a0a0a (Tailwind neutral-950) backgrounds.
@@ -63,7 +65,65 @@ def _to_out(session, c: Class) -> ClassOut:
     return ClassOut(
         id=c.id, project_id=c.project_id, name=c.name, color=c.color,
         geometry_type=c.geometry_type, description=c.description, annotation_count=n,
+        parent_id=c.parent_id, keypoint_schema=c.keypoint_schema,
     )
+
+
+def _validate_keypoint_schema(schema: dict | None) -> None:
+    if schema is None:
+        return
+    if not isinstance(schema, dict):
+        raise HTTPException(400, "keypoint_schema must be an object")
+    kps = schema.get("keypoints")
+    if not isinstance(kps, list) or not kps:
+        raise HTTPException(400, "keypoint_schema.keypoints must be non-empty list")
+    names: set[str] = set()
+    for kp in kps:
+        if not isinstance(kp, dict) or not isinstance(kp.get("name"), str) or not kp["name"].strip():
+            raise HTTPException(400, "each keypoint needs a non-empty 'name'")
+        if kp["name"] in names:
+            raise HTTPException(400, f"duplicate keypoint name '{kp['name']}'")
+        names.add(kp["name"])
+    edges = schema.get("edges", [])
+    if not isinstance(edges, list):
+        raise HTTPException(400, "keypoint_schema.edges must be a list")
+    n = len(kps)
+    for e in edges:
+        if not (isinstance(e, list | tuple) and len(e) == 2):
+            raise HTTPException(400, "edge must be [i,j]")
+        i, j = e
+        if not (isinstance(i, int) and isinstance(j, int) and 0 <= i < n and 0 <= j < n and i != j):
+            raise HTTPException(400, f"edge index out of range: {e}")
+
+
+def _resolve_and_check_parent(
+    session, project_id: UUID, this_id: UUID | None, parent_id: UUID | None,
+) -> None:
+    """Validate same-project + cycle prevention + depth cap."""
+    if parent_id is None:
+        return
+    if this_id is not None and parent_id == this_id:
+        raise HTTPException(400, "class cannot be its own parent")
+    parent = session.get(Class, parent_id)
+    if not parent or parent.project_id != project_id:
+        raise HTTPException(400, "parent must be a class in the same project")
+    # Walk up; reject if we ever visit `this_id` (would form a cycle), or
+    # exceed MAX_HIERARCHY_DEPTH ancestors.
+    cursor: Class | None = parent
+    seen: set[UUID] = set()
+    depth = 1  # parent itself counts as depth 1
+    while cursor is not None:
+        if cursor.id in seen:
+            raise HTTPException(400, "existing hierarchy already contains a cycle")
+        seen.add(cursor.id)
+        if this_id is not None and cursor.parent_id == this_id:
+            raise HTTPException(400, "would create a cycle")
+        if cursor.parent_id is None:
+            break
+        cursor = session.get(Class, cursor.parent_id)
+        depth += 1
+        if depth > MAX_HIERARCHY_DEPTH:
+            raise HTTPException(400, f"hierarchy depth would exceed {MAX_HIERARCHY_DEPTH}")
 
 
 @router.get("", response_model=list[ClassOut])
@@ -80,9 +140,14 @@ def create_class(project_id: UUID, body: ClassIn, session: SessionDep, _r: Requi
         select(func.count()).select_from(Class).where(Class.project_id == project_id)
     ).one()
     color = body.color or PALETTE[n_existing % len(PALETTE)]
+    _resolve_and_check_parent(session, project_id, None, body.parent_id)
+    if body.geometry_type == GeometryType.KEYPOINTS and not body.keypoint_schema:
+        raise HTTPException(400, "keypoints class requires keypoint_schema")
+    _validate_keypoint_schema(body.keypoint_schema)
     c = Class(
         project_id=project_id, name=body.name, color=color,
         geometry_type=body.geometry_type, description=body.description,
+        parent_id=body.parent_id, keypoint_schema=body.keypoint_schema,
     )
     session.add(c)
     session.commit()
@@ -96,6 +161,11 @@ def delete_class(project_id: UUID, class_id: UUID, session: SessionDep, _r: Requ
     c = session.get(Class, class_id)
     if not c or c.project_id != project_id:
         raise HTTPException(404, "class not found")
+    n_children = session.exec(
+        select(func.count()).select_from(Class).where(Class.parent_id == class_id)
+    ).one()
+    if n_children:
+        raise HTTPException(409, "class has child classes — reparent or delete them first")
     session.delete(c)
     session.commit()
 
@@ -119,6 +189,23 @@ def update_class(
         c.geometry_type = body.geometry_type
     if body.description is not None:
         c.description = body.description
+    if body.set_parent_root:
+        c.parent_id = None
+    elif body.parent_id is not None:
+        _resolve_and_check_parent(session, project_id, c.id, body.parent_id)
+        c.parent_id = body.parent_id
+    if body.keypoint_schema is not None:
+        # Schema is immutable once any KEYPOINTS annotation references this class.
+        used = session.exec(
+            select(func.count()).select_from(Annotation).where(Annotation.class_id == c.id)
+        ).one()
+        if used and c.keypoint_schema:
+            raise HTTPException(
+                409,
+                "keypoint_schema is locked once annotations exist for this class",
+            )
+        _validate_keypoint_schema(body.keypoint_schema)
+        c.keypoint_schema = body.keypoint_schema
     session.add(c)
     session.commit()
     session.refresh(c)

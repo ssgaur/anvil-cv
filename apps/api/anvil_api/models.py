@@ -28,6 +28,9 @@ class GeometryType(StrEnum):
     POLYGON = "polygon"
     BBOX = "bbox"
     BRUSH = "brush"  # rasterized → polygon on save
+    POLYLINE = "polyline"   # open polyline; geometry: {"points":[[x,y],...]}
+    KEYPOINTS = "keypoints"  # geometry: {"points":[[x,y,v],...]} v∈{0,1,2}; schema on Class
+    OBB = "obb"             # rotated bbox; geometry: {"cx","cy","w","h","angle_rad"}
 
 
 class AnnotationSource(StrEnum):
@@ -248,6 +251,13 @@ class Class(SQLModel, table=True):
     color: str = Field(max_length=16)  # #RRGGBB
     geometry_type: GeometryType = Field(default=GeometryType.POLYGON)
     description: str = Field(default="")
+    # Optional parent for taxonomy hierarchy. NULL = root. Cycle prevention
+    # and same-project enforcement live in routes/classes.py.
+    parent_id: UUID | None = Field(default=None, foreign_key="classes.id", index=True)
+    # Per-class keypoint template (only used when geometry_type=KEYPOINTS).
+    # Shape: {"keypoints":[{"name":..,"color":?},...], "edges":[[i,j],...]}
+    # 0-based indices. Treated as immutable once any keypoint annotation references this class.
+    keypoint_schema: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow)
 
     project: Project = Relationship(back_populates="classes")

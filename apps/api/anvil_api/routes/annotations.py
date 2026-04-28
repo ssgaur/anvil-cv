@@ -8,11 +8,13 @@ from anvil_api.auth import (
     RequireLabeler,
     SessionDep,
 )
+from anvil_api.geometry import normalize_obb_angle, validate_geometry
 from anvil_api.models import (
     Annotation,
     Class,
     ClassProperty,
     ClassPropertyType,
+    GeometryType,
     Image,
     ReviewStatus,
 )
@@ -117,9 +119,19 @@ def create_annotation(
     cls = session.get(Class, body.class_id)
     if not cls:
         raise HTTPException(400, "unknown class_id")
+    # Centralized geometry validation (per-type shape + finite numeric checks).
+    kp_count = (
+        len(cls.keypoint_schema.get("keypoints", []))
+        if cls.keypoint_schema and isinstance(cls.keypoint_schema, dict)
+        else None
+    )
+    validate_geometry(body.geometry_type, body.geometry, keypoint_count=kp_count)
+    geom = dict(body.geometry)
+    if body.geometry_type == GeometryType.OBB:
+        geom["angle_rad"] = normalize_obb_angle(float(geom["angle_rad"]))
     a = Annotation(
         image_id=img.id, class_id=body.class_id,
-        geometry_type=body.geometry_type, geometry=body.geometry,
+        geometry_type=body.geometry_type, geometry=geom,
         source=body.source, confidence=body.confidence,
         properties=_validate_properties(session, body.class_id, body.properties or {}),
         created_by=user.id,
@@ -165,7 +177,18 @@ def update_annotation(
     if body.geometry_type is not None:
         a.geometry_type = body.geometry_type
     if body.geometry is not None:
-        a.geometry = body.geometry
+        # Re-validate against (possibly updated) geometry_type and class schema.
+        cls_for_kp = session.get(Class, a.class_id)
+        kp_count = (
+            len(cls_for_kp.keypoint_schema.get("keypoints", []))
+            if cls_for_kp and cls_for_kp.keypoint_schema and isinstance(cls_for_kp.keypoint_schema, dict)
+            else None
+        )
+        validate_geometry(a.geometry_type, body.geometry, keypoint_count=kp_count)
+        geom = dict(body.geometry)
+        if a.geometry_type == GeometryType.OBB:
+            geom["angle_rad"] = normalize_obb_angle(float(geom["angle_rad"]))
+        a.geometry = geom
     if body.properties is not None:
         a.properties = _validate_properties(session, a.class_id, body.properties)
     session.add(a)

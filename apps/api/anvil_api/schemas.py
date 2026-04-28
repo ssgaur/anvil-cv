@@ -161,6 +161,8 @@ class ClassIn(BaseModel):
     color: str = "#22c55e"
     geometry_type: GeometryType = GeometryType.POLYGON
     description: str = ""
+    parent_id: UUID | None = None
+    keypoint_schema: dict[str, Any] | None = None
 
 
 class ClassOut(BaseModel):
@@ -171,6 +173,8 @@ class ClassOut(BaseModel):
     geometry_type: GeometryType
     description: str
     annotation_count: int = 0
+    parent_id: UUID | None = None
+    keypoint_schema: dict[str, Any] | None = None
 
 
 class ClassPatch(BaseModel):
@@ -178,6 +182,9 @@ class ClassPatch(BaseModel):
     color: str | None = None
     geometry_type: GeometryType | None = None
     description: str | None = None
+    parent_id: UUID | None = None  # explicit null in body → set to root via separate param
+    set_parent_root: bool = False  # when True, force parent_id NULL regardless of parent_id field
+    keypoint_schema: dict[str, Any] | None = None
 
 
 # ---- Class properties (per-class attribute schema)

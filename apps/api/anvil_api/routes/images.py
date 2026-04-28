@@ -181,6 +181,9 @@ async def _embed_async(image_id: UUID) -> None:
 
 
 # --------- List / Get ---------
+_ALLOWED_SORTS = {"recent", "oldest", "filename", "most_labels", "fewest_labels", "uncertainty"}
+
+
 @router.get(
     "/projects/{project_id}/datasets/{dataset_id}/images",
     response_model=list[ImageOut],
@@ -190,21 +193,56 @@ def list_images(
     response: Response,
     status_filter: ImageStatus | None = None,
     review_status: ReviewStatus | None = None,
+    has_annotations: bool | None = None,
+    class_id: list[UUID] | None = Query(default=None),
+    sort: str = "oldest",
     limit: int = 200,
     offset: int = 0,
 ) -> list[ImageOut]:
     _check_dataset(session, project_id, dataset_id)
+    if sort not in _ALLOWED_SORTS:
+        raise HTTPException(400, f"sort must be one of {sorted(_ALLOWED_SORTS)}")
     base = select(Image).where(Image.dataset_id == dataset_id)
     if status_filter:
         base = base.where(Image.status == status_filter)
     if review_status:
         base = base.where(Image.review_status == review_status)
+    # Subquery for label counts (used by has_annotations + sort).
+    ann_count_sq = (
+        select(Annotation.image_id, func.count().label("n"))
+        .group_by(Annotation.image_id)
+        .subquery()
+    )
+    if has_annotations is True:
+        base = base.where(Image.id.in_(select(Annotation.image_id).distinct()))  # type: ignore[attr-defined]
+    elif has_annotations is False:
+        base = base.where(~Image.id.in_(select(Annotation.image_id).distinct()))  # type: ignore[attr-defined]
+    if class_id:
+        # OR semantics: image has at least one annotation in any of these classes.
+        base = base.where(
+            Image.id.in_(  # type: ignore[attr-defined]
+                select(Annotation.image_id).where(Annotation.class_id.in_(class_id))  # type: ignore[attr-defined]
+            )
+        )
     total = session.exec(
         select(func.count()).select_from(base.subquery())
     ).one()
     response.headers["X-Total-Count"] = str(int(total))
     response.headers["Access-Control-Expose-Headers"] = "X-Total-Count"
-    q = base.order_by(Image.uploaded_at).offset(offset).limit(limit)
+    # Stable secondary sort on Image.id to keep pagination deterministic.
+    if sort == "recent":
+        base = base.order_by(Image.uploaded_at.desc(), Image.id)  # type: ignore[union-attr]
+    elif sort == "oldest":
+        base = base.order_by(Image.uploaded_at, Image.id)
+    elif sort == "filename":
+        base = base.order_by(Image.filename, Image.id)
+    elif sort == "uncertainty":
+        base = base.order_by(Image.uncertainty.desc().nulls_last(), Image.id)  # type: ignore[union-attr]
+    elif sort in ("most_labels", "fewest_labels"):
+        base = base.outerjoin(ann_count_sq, ann_count_sq.c.image_id == Image.id)
+        n_col = func.coalesce(ann_count_sq.c.n, 0)
+        base = base.order_by(n_col.desc() if sort == "most_labels" else n_col, Image.id)
+    q = base.offset(offset).limit(limit)
     return [_to_out(session, i) for i in session.exec(q).all()]
 
 

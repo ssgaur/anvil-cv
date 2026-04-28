@@ -122,6 +122,35 @@ def _polygon_area(points: list[list[float]]) -> float:
     return abs(s) / 2.0
 
 
+def _coco_category(c: Class, cls_id_to_idx: dict, classes: list[Class]) -> dict:
+    by_id = {cc.id: cc for cc in classes}
+    # Build a name path "root/.../leaf" for hierarchy.
+    path: list[str] = []
+    cur: Class | None = c
+    seen: set = set()
+    while cur is not None and cur.id not in seen:
+        seen.add(cur.id)
+        path.insert(0, cur.name)
+        cur = by_id.get(cur.parent_id) if cur.parent_id else None
+    parent = by_id.get(c.parent_id) if c.parent_id else None
+    cat = {
+        "id": cls_id_to_idx[c.id],
+        "name": c.name,
+        "supercategory": parent.name if parent else "",
+        "anvil": {
+            "geometry_type": str(c.geometry_type),
+            "path": "/".join(path),
+            "parent_id": cls_id_to_idx[c.parent_id] if c.parent_id and c.parent_id in cls_id_to_idx else None,
+        },
+    }
+    if c.keypoint_schema:
+        kps = c.keypoint_schema.get("keypoints", [])
+        cat["keypoints"] = [k["name"] for k in kps]
+        # COCO skeleton is 1-based pairs.
+        cat["skeleton"] = [[i + 1, j + 1] for i, j in c.keypoint_schema.get("edges", [])]
+    return cat
+
+
 @router.get("/{dataset_id}/export/coco")
 def export_coco(
     project_id: UUID, dataset_id: UUID, session: SessionDep, _r: RequireReviewer,
@@ -171,6 +200,8 @@ def export_coco(
             cat = cls_id_to_idx.get(a.class_id)
             if cat is None:
                 continue
+            anvil_ext: dict = {"geometry_type": str(a.geometry_type)}
+            extra: dict = {}
             if a.geometry_type == "polygon" and a.geometry.get("points"):
                 pts = a.geometry["points"]
                 seg = _polygon_to_segmentation(pts)
@@ -181,9 +212,60 @@ def export_coco(
                 bw = float(a.geometry["w"]); bh = float(a.geometry["h"])
                 seg = [[bx, by, bx + bw, by, bx + bw, by + bh, bx, by + bh]]
                 area = bw * bh
+            elif a.geometry_type == "polyline" and a.geometry.get("points"):
+                # Non-standard COCO; encoded as Anvil extension. Segmentation is
+                # the open polyline points (consumers may treat as polygon).
+                pts = a.geometry["points"]
+                seg = _polygon_to_segmentation(pts)
+                bx, by, bw, bh = _polygon_bbox(pts)
+                area = 0.0
+                anvil_ext["points"] = pts
+            elif a.geometry_type == "obb" and "cx" in a.geometry:
+                import math
+                cx = float(a.geometry["cx"]); cy = float(a.geometry["cy"])
+                w = float(a.geometry["w"]); h = float(a.geometry["h"])
+                ang = float(a.geometry.get("angle_rad", 0.0))
+                cos_a, sin_a = math.cos(ang), math.sin(ang)
+                hw, hh = w / 2.0, h / 2.0
+                corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+                rotated = [(cx + x * cos_a - y * sin_a, cy + x * sin_a + y * cos_a) for x, y in corners]
+                pts = [[x, y] for x, y in rotated]
+                seg = _polygon_to_segmentation(pts)
+                bx, by, bw, bh = _polygon_bbox(pts)
+                area = w * h
+                anvil_ext["obb"] = {"cx": cx, "cy": cy, "w": w, "h": h, "angle_rad": ang}
+            elif a.geometry_type == "keypoints" and a.geometry.get("points"):
+                cls_obj = next((c for c in classes if c.id == a.class_id), None)
+                kp_names = (
+                    [k["name"] for k in cls_obj.keypoint_schema.get("keypoints", [])]
+                    if cls_obj and cls_obj.keypoint_schema else []
+                )
+                kp_pts = a.geometry["points"]
+                # COCO keypoints flat list [x,y,v,...]; v=0 → x,y forced 0.
+                flat: list[float] = []
+                num_lab = 0
+                for p in kp_pts:
+                    x, y, v = p
+                    if v == 0:
+                        flat.extend([0.0, 0.0, 0])
+                    else:
+                        flat.extend([float(x), float(y), int(v)])
+                        num_lab += 1
+                visible = [(x, y) for x, y, v in kp_pts if v != 0]
+                if visible:
+                    xs, ys = zip(*visible, strict=False)
+                    bx, by = min(xs), min(ys)
+                    bw, bh = max(xs) - bx, max(ys) - by
+                else:
+                    bx = by = bw = bh = 0.0
+                seg = []
+                area = bw * bh
+                extra["keypoints"] = flat
+                extra["num_keypoints"] = num_lab
+                anvil_ext["keypoint_names"] = kp_names
             else:
                 continue
-            annotations.append({
+            ann = {
                 "id": k,
                 "image_id": img_id_to_idx[a.image_id],
                 "category_id": cat,
@@ -191,7 +273,10 @@ def export_coco(
                 "bbox": [bx, by, bw, bh],
                 "area": area,
                 "iscrowd": 0,
-            })
+                "anvil": anvil_ext,
+            }
+            ann.update(extra)
+            annotations.append(ann)
 
     coco = {
         "info": {
@@ -214,8 +299,7 @@ def export_coco(
         ],
         "annotations": annotations,
         "categories": [
-            {"id": cls_id_to_idx[c.id], "name": c.name, "supercategory": ""}
-            for c in classes
+            _coco_category(c, cls_id_to_idx, classes) for c in classes
         ],
     }
 

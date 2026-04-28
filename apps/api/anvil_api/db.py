@@ -14,9 +14,15 @@ def init_db() -> None:
     # Import models so SQLModel knows about them
     from anvil_api import models  # noqa: F401
     SQLModel.metadata.create_all(engine)
+    from sqlalchemy import text
+    # ALTER TYPE ... ADD VALUE must run outside a transaction block in PG.
+    # Idempotent via IF NOT EXISTS (PG 12+).
+    with engine.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+        for v in ("POLYLINE", "KEYPOINTS", "OBB"):
+            conn.execute(text(f"ALTER TYPE geometrytype ADD VALUE IF NOT EXISTS '{v}'"))
     # Lightweight forward-compat migrations (solo dev; replace with Alembic later)
     with engine.begin() as conn:
-        from sqlalchemy import text
         conn.execute(text(
             "ALTER TABLE projects ADD COLUMN IF NOT EXISTS active_model_version_id UUID"
         ))
@@ -75,6 +81,25 @@ def init_db() -> None:
         conn.execute(text(
             "ALTER TABLE users ADD CONSTRAINT ck_users_role "
             "CHECK (role IN ('admin','reviewer','labeler','viewer'))"
+        ))
+        # Class hierarchy + keypoint schema (prod-class-hierarchy / prod-keypoint-tool).
+        conn.execute(text(
+            "ALTER TABLE classes ADD COLUMN IF NOT EXISTS parent_id UUID"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_classes_parent_id ON classes(parent_id)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE classes ADD COLUMN IF NOT EXISTS keypoint_schema JSONB"
+        ))
+        # Indexes for prod-image-filters (class filter via EXISTS, label-count sort).
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_annotations_image_class "
+            "ON annotations(image_id, class_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_images_dataset_uploaded "
+            "ON images(dataset_id, uploaded_at)"
         ))
 
 
