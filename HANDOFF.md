@@ -118,7 +118,7 @@ Track B folder anchor: **`apps/`, `compose.yml`, root configs.** Do NOT touch `b
 - M1 Pro 16GB: full fine-tune with `base_plus` will OOM. Use `--variant tiny` or skip.
 
 ## Latest known-good commit on `main`
-`5621786 feat(web): bulk-ops UI, server-side filters/sort, class hierarchy + keypoint schema editor`
+`264a8c4 feat(launch): OSS launch readiness pack`
 
 ## Starting a new session — paste this
 > "Read `~/PersonalDev/anvil-cv/HANDOFF.md`. We are working on Track [A or B] only. Don't touch the other track's folders unless I explicitly ask. Then check `todos` table in SQL for current pending items in this track."
