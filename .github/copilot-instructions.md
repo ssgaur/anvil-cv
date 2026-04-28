@@ -10,8 +10,8 @@ To keep sessions short and focused (avoid 11-checkpoint sprawl), Anvil work runs
 
 | Track | Goal | Folder anchor (yours to touch) | Folder anchor (DO NOT touch) |
 |---|---|---|---|
-| **A — Launch Sprint** | 2-week distribution sprint: SAM2 fine-tuning benchmark → blog → landing → outreach | `benchmarks/`, `docs/launch/`, landing page repo | `apps/`, `compose.yml` |
-| **B — Product Hardening** | Make the OSS app feel enterprise-grade (auth, roles, onboarding, perf, observability) | `apps/`, `compose.yml`, root configs | `benchmarks/` |
+| **A — Launch Sprint** | Distribution sprint: SAM2 fine-tuning benchmark → blog → landing → outreach | `benchmarks/`, `docs/launch/`, landing page repo | `apps/`, `compose.yml` |
+| **B — Product / OSS App** | Make the OSS app feel enterprise-grade: annotation UX, auth, roles, onboarding, docs, launch readiness | `apps/`, `compose.yml`, root configs, `.github/` | `benchmarks/` |
 
 If the user hasn't told you which track, **ask before touching code**. Cross-track changes are allowed only when explicitly requested.
 
@@ -34,8 +34,8 @@ anvil-cv/
 │ │ ├── schemas.py Pydantic request/response (XxxIn / XxxOut)
 │ │ ├── ml_client.py HTTP client to ML service (predict/train/evaluate)
 │ │ ├── auth.py / db.py / config.py / storage.py
-│ │ └── routes/ annotations, auth, classes, comments, datasets,
-│ │ images, models, projects
+│ │ └── routes/ annotations, auth, bulk, classes, comments, datasets,
+│ │ images, models, projects, setup
 │ ├── ml/anvil_ml/ FastAPI ML service (port 8001)
 │ │ ├── main.py /predict, /train, /evaluate endpoints
 │ │ ├── engine.py SAM2 model loader + cached predictor
@@ -44,7 +44,7 @@ anvil-cv/
 │ ├── web/src/
 │ │ ├── pages/ LoginPage, ProjectsPage, ProjectDetailPage,
 │ │ │ DatasetDetailPage, WorkviewPage
-│ │ ├── components/ (workview tools, modals, dashboards)
+│ │ ├── components/ app shell, onboarding tour, guards, toasts
 │ │ ├── lib/api.ts typed REST client
 │ │ ├── store/ zustand stores
 │ │ └── types/index.ts shared TS types
@@ -59,21 +59,45 @@ anvil-cv/
 │ ├── class_properties_e2e.py single/multi/text attributes
 │ ├── coco_roundtrip_e2e.py export then re-import
 │ ├── undo_redo_e2e.py / bbox_resize_e2e.py
+│ ├── auth_e2e.py / prod_features_e2e.py
+│ └── load_sample_dataset.py synthetic launch demo loader
 ├── data/ local Postgres + uploads dir (gitignored)
 ├── logs/ api.log / ml.log / web.log / worker.log
 ├── checkpoints/ SAM2 base weights (gitignored)
 ├── docs/ ARCHITECTURE, FEATURES, FINE_TUNING, API, DEV_SETUP, FAQ, ROADMAP
-└── .github/ this file + CI + issue/PR templates
+│ ├── assets/anvil-demo.gif launch visual
+│ └── launch/DEMO_RECORDING.md
+├── mkdocs.yml docs site config
+└── .github/ this file + CI/docs/GHCR workflows + issue/PR templates
 ```
 
 ## Current status (as of latest commit)
 
-- **30 / 38 todos done.** 8 remaining: `quality-dashboard`, `docker-compose-dev`, `annotation-canvas` polish, `finalize-name-domain`, `docs-site`, `public-demo`, `launch-post`, `launch`.
-- Phases 0, 1, 2, 3 complete. Phase 4 (launch) is open.
-- Latest commit: `9479b21 feat(model-versions): per-class IoU + A/B compare + delete`.
-- See [docs/ROADMAP.md](../docs/ROADMAP.md) for the live status of every todo.
+- **35 / 46 todos done.** 11 product backlog items remain: active-learning queue,
+  API tokens, audit log, bundle/model export, YOLO export, comments/mentions,
+  quality dashboard, S3 backend, task assignment, webhooks, Windows verification.
+- Product hardening is complete: RBAC, HttpOnly cookies, refresh-token rotation,
+  password reset, setup wizard, CSRF, rate limiting, observability, backup/restore.
+- Annotation product phase 1 is complete: polyline, keypoints, OBB, bulk ops,
+  class hierarchy, server-side image filters/sort, and COCO export extensions.
+- OSS launch readiness is complete: README, demo GIF, sample loader, community
+  files, MkDocs/GitHub Pages workflow, GHCR workflow, onboarding tour, keyboard help.
+- Latest known-good state: launch-ready `main` (use `git log -1 --oneline` for the exact newest commit).
+- Source of truth: [HANDOFF.md](../HANDOFF.md) plus the SQL `todos` table.
 
-## Local dev — start the 3 services
+## Local dev — start the app
+
+Preferred OSS path:
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+python3 scripts/load_sample_dataset.py
+```
+
+Open <http://localhost:5173>. Dev admin is `admin@anvil.dev` / `admin`.
+
+### Local 3-process recipe
 
 API on :8000, ML on :8001, web on :5173. Postgres expected on localhost:5432 (database `anvil`).
 
