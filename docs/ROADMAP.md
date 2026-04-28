@@ -38,8 +38,18 @@ Live status. Done = shipped to `main`. Order within a phase is suggested, not ma
 - [x] Review flow: Approve / Reject / Needs-changes
 - [x] Predefined reject reasons
 - [x] **Spatial pin comments** anchored to canvas coords
+- [x] Members + roles (RBAC: admin/reviewer/labeler/viewer) — `9e95b47`
+- [x] First-run /setup wizard — `3559026`
+- [x] Real auth: JWT + GitHub OAuth — `176197c`
+- [x] HttpOnly cookie sessions + CSRF + token-version invalidation — `966fc56`
+- [x] Rotating refresh tokens (family revocation, reuse detection) + password reset — `e813dfa`
+- [x] Rate limiting (login/signup/oauth/reset) — `6a01137`
+- [x] Observability: /metrics, /ready, JSON logs — `38f7d09`
+- [x] Pagination + virtualized image list — `6e790cc`
+- [x] V7-parity keyboard shortcuts — `2920fa4`
+- [x] Toast UX (replaces blocking alerts) — `3971a49`
+- [x] `anvil-cli` backup + restore — `16848db`
 - [ ] **`quality-dashboard`** — per-annotator throughput + IoU agreement matrix
-- [ ] Members + roles (org-level RBAC)
 
 ## Phase 4 — Polish & launch open
 - [ ] **`finalize-name-domain`** — secure final name + domain (anvil.cv?)

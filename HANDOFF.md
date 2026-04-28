@@ -36,23 +36,27 @@ Next (in this order):
 
 Track A folder anchor: **`benchmarks/`, `docs/launch/`, landing page repo.** Do NOT touch `apps/`.
 
-### Track B — Product Hardening (ongoing)
+### Track B — Product Hardening (DONE — v0 hardening complete)
 Goal: someone outside us can `docker compose up` Anvil on Monday and feel it's enterprise-grade.
 
-Status: **Stack works end-to-end.** All containers Healthy, CI green (3 jobs: python/web/docker-smoke). Annotation core, classes, projects, datasets, COCO import/export, SAM2 click-prompt, LoRA training, A/B compare, per-class IoU, review flow all wired.
+Status: **All 11 hardening items shipped to `main`.** Stack works end-to-end, all containers Healthy, CI green (3 jobs: python/web/docker-smoke). Auth is now production-shaped: HttpOnly cookie sessions + bearer-header CLI path, RBAC (admin/reviewer/labeler/viewer), GitHub OAuth, rotating refresh tokens with reuse detection, password-reset flow, CSRF middleware, in-process rate limiting, /metrics + JSON logs + /ready, `anvil-cli backup/restore`, first-run /setup wizard, V7-parity keyboard shortcuts, paginated/virtualized image list, empty + ML-down states.
 
-Open hardening todos (in SQL `todos` table, prefix `hardening-*`):
-- `hardening-auth` — real JWT auth (currently single hardcoded dev user)
-- `hardening-multiuser` — admin/labeler/reviewer roles
-- `hardening-onboarding` — first-run /setup wizard
-- `hardening-error-states` — empty states, ML-down states across UI
-- `hardening-windows` — verify Windows Docker Desktop + bare Linux
-- `hardening-keyboard` — V7-parity shortcuts (B/P/Z/space/1-9/ctrl+z)
-- `hardening-perf` — pagination + virtualized list for 10k+ image projects
-- `hardening-backup` — `anvil-cli backup/restore`
-- `hardening-observability` — `/metrics` Prometheus, JSON logs, Sentry hook
+Closed hardening todos (in SQL `todos` table):
+- `hardening-auth` → `176197c`
+- `hardening-multiuser` (RBAC) → `9e95b47`
+- `hardening-rate-limit` → `6a01137`
+- `hardening-onboarding` (/setup) → `3559026`
+- `hardening-error-states` (toasts) → `3971a49`
+- `hardening-keyboard` → `2920fa4`
+- `hardening-perf` (pagination) → `6e790cc`
+- `hardening-observability` → `38f7d09`
+- `hardening-backup` → `16848db`
+- `hardening-httponly-cookie-auth` → `966fc56`
+- `hardening-refresh-tokens` + `hardening-password-reset` → `e813dfa`
 
-Plus pre-existing pending: `annotation-canvas`, `docs-site`, `quality-dashboard`, `public-demo`, `phase2-video-finetune`, `finalize-name-domain`.
+Remaining infra item (deferred, not blocking): `hardening-windows` — verify on Windows Docker Desktop + bare Linux. Needs a Windows host; deferred until needed.
+
+**Now moving to product-development phase.** Open product-dev todos (in SQL `todos`, prefix `prod-*`) — annotation features, model loop, exports, team/quality. See `docs/FUTURE.md` for the directional backlog.
 
 Track B folder anchor: **`apps/`, `compose.yml`, root configs.** Do NOT touch `benchmarks/`.
 
@@ -76,7 +80,7 @@ Track B folder anchor: **`apps/`, `compose.yml`, root configs.** Do NOT touch `b
 - M1 Pro 16GB: full fine-tune with `base_plus` will OOM. Use `--variant tiny` or skip.
 
 ## Latest known-good commit on `main`
-`a546a5b feat(benchmark): one-shot run_sweep.sh wrapper`
+`e813dfa feat(auth): rotating refresh tokens + password reset flow`
 
 ## Starting a new session — paste this
 > "Read `~/PersonalDev/anvil-cv/HANDOFF.md`. We are working on Track [A or B] only. Don't touch the other track's folders unless I explicitly ask. Then check `todos` table in SQL for current pending items in this track."
