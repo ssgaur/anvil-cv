@@ -4,14 +4,24 @@ import type {
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
+/* Token transport: HttpOnly cookies set by the server.
+ * The client used to keep an access token in localStorage; that storage is
+ * now actively cleared on first load to migrate existing sessions. */
 function token(): string | null {
-  return localStorage.getItem("anvil_token");
+  // Kept for back-compat (older code paths checking for a session before
+  // calling /me); always null now that auth lives in cookies.
+  return null;
 }
 
-function setToken(t: string | null) {
-  if (t) localStorage.setItem("anvil_token", t);
-  else localStorage.removeItem("anvil_token");
+function setToken(_t: string | null) {
+  // No-op; cookies are managed by the server. Always wipe the legacy entry.
+  try { localStorage.removeItem("anvil_token"); } catch { /* noop */ }
 }
+
+// Wipe legacy storage once at module load so stale tokens can't shadow cookies.
+try { localStorage.removeItem("anvil_token"); } catch { /* noop */ }
+
+const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
@@ -20,12 +30,13 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
       : {}),
     ...((init.headers as Record<string, string>) ?? {}),
   };
-  const t = token();
-  if (t) headers.Authorization = `Bearer ${t}`;
-  const r = await fetch(`${API}${path}`, { ...init, headers });
+  const method = (init.method ?? "GET").toUpperCase();
+  if (UNSAFE.has(method)) headers["X-Anvil-CSRF"] = "1";
+  const r = await fetch(`${API}${path}`, { ...init, headers, credentials: "include" });
   if (r.status === 401) {
-    setToken(null);
-    if (location.pathname !== "/login") location.href = "/login";
+    if (location.pathname !== "/login" && !path.startsWith("/api/auth/")) {
+      location.href = "/login";
+    }
     throw new Error("unauthorized");
   }
   if (!r.ok) {
@@ -51,10 +62,9 @@ export async function downloadCocoExport(
   projectId: string, datasetId: string, filename: string,
   opts?: { review_status?: string },
 ) {
-  const t = token();
   const qs = opts?.review_status ? `?review_status=${encodeURIComponent(opts.review_status)}` : "";
   const r = await fetch(`${API}/api/projects/${projectId}/datasets/${datasetId}/export/coco${qs}`, {
-    headers: t ? { Authorization: `Bearer ${t}` } : undefined,
+    credentials: "include",
   });
   if (!r.ok) throw new Error(`export failed: ${r.status} ${r.statusText}`);
   const blob = await r.blob();
@@ -72,21 +82,31 @@ export const api = {
 
   // Auth
   login: async (email: string, password: string) => {
-    const r = await req<{ access_token: string }>("/api/auth/login", {
+    return await req<{ access_token: string }>("/api/auth/login", {
       method: "POST", body: JSON.stringify({ email, password }),
     });
-    setToken(r.access_token);
-    return r;
   },
   signup: async (email: string, name: string, password: string) => {
-    const r = await req<{ access_token: string }>("/api/auth/signup", {
+    return await req<{ access_token: string }>("/api/auth/signup", {
       method: "POST", body: JSON.stringify({ email, name, password }),
     });
-    setToken(r.access_token);
-    return r;
   },
   me: () => req<User>("/api/auth/me"),
-  logout: () => { setToken(null); location.href = "/login"; },
+  logout: async () => {
+    try { await req<void>("/api/auth/logout", { method: "POST" }); } catch { /* noop */ }
+    setToken(null);
+    location.href = "/login";
+  },
+
+  // Password reset
+  passwordResetRequest: (email: string) =>
+    req<void>("/api/auth/password-reset/request", {
+      method: "POST", body: JSON.stringify({ email }),
+    }),
+  passwordResetConfirm: (token: string, password: string) =>
+    req<void>("/api/auth/password-reset/confirm", {
+      method: "POST", body: JSON.stringify({ token, password }),
+    }),
 
   // Auth providers (which login methods are enabled on this deployment)
   providers: () =>
@@ -142,10 +162,9 @@ export const api = {
     if (opts?.limit) q.set("limit", String(opts.limit));
     if (opts?.offset) q.set("offset", String(opts.offset));
     const qs = q.toString();
-    const t = token();
     const r = await fetch(
       `${API}/api/projects/${projectId}/datasets/${datasetId}/images${qs ? `?${qs}` : ""}`,
-      { headers: t ? { Authorization: `Bearer ${t}` } : {} },
+      { credentials: "include" },
     );
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     const items = (await r.json()) as ImageRow[];
@@ -310,10 +329,8 @@ export const api = {
   // First-run setup wizard
   setupStatus: () => req<{ needs_setup: boolean }>(`/api/setup/status`),
   setupInitialize: async (body: { email: string; name: string; password: string }) => {
-    const r = await req<{ access_token: string }>(
+    return await req<{ access_token: string }>(
       `/api/setup/initialize`, { method: "POST", body: JSON.stringify(body) },
     );
-    setToken(r.access_token);
-    return r;
   },
 };

@@ -16,8 +16,10 @@ Flow per provider:
             * Google: requires `email_verified == true`
             * GitHub: requires a `primary && verified` email from /user/emails
        - upserts User + UserOAuthIdentity (linking by verified email allowed)
-       - mints an Anvil JWT and 302-redirects to
-         `${FRONTEND_URL}/auth/callback#token=<jwt>`
+       - mints an Anvil JWT, sets it as an HttpOnly access cookie, and
+         302-redirects to `${FRONTEND_URL}/auth/callback` (no token in URL).
+         The frontend hydrates the session by calling `/api/auth/me`, which
+         picks up the cookie automatically.
        - clears the nonce cookie
 """
 from __future__ import annotations
@@ -33,8 +35,9 @@ from fastapi.responses import RedirectResponse
 from jose import JWTError, jwt
 from sqlmodel import select
 
-from anvil_api.auth import SessionDep, make_token, normalize_email
+from anvil_api.auth import SessionDep, access_token_max_age_seconds, make_token, normalize_email
 from anvil_api.config import settings
+from anvil_api.cookies import set_access_cookie
 from anvil_api.models import User, UserOAuthIdentity, UserRole
 from anvil_api.ratelimit import hit_oauth_callback_ip
 
@@ -141,10 +144,11 @@ def _failure_redirect(reason: str) -> RedirectResponse:
     return RedirectResponse(f"{base}/login?oauth_error={reason}", status_code=302)
 
 
-def _success_redirect(token: str) -> RedirectResponse:
+def _success_redirect() -> RedirectResponse:
+    """Redirect to the frontend callback page; the access token is set as an
+    HttpOnly cookie by the caller, NOT placed in the URL fragment."""
     base = settings.frontend_url.rstrip("/")
-    # Token is passed in the URL fragment so it never reaches any server.
-    return RedirectResponse(f"{base}/auth/callback#token={token}", status_code=302)
+    return RedirectResponse(f"{base}/auth/callback", status_code=302)
 
 
 async def _google_userinfo(code: str) -> tuple[str, str, str]:
@@ -321,7 +325,11 @@ async def oauth_callback(
     user_id = _upsert_oauth_user(
         session, provider=provider, subject=subject, email=email, name=name,
     )
-    token = make_token(user_id)
-    resp = _success_redirect(token)
+    # Reload to grab token_version (default 0 for new users).
+    user_obj = session.get(User, user_id)
+    tv = int(user_obj.token_version) if user_obj is not None else 0
+    token = make_token(user_id, token_version=tv)
+    resp = _success_redirect()
+    set_access_cookie(resp, token, access_token_max_age_seconds())
     resp.delete_cookie(NONCE_COOKIE, path="/")
     return resp

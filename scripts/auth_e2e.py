@@ -87,8 +87,12 @@ def main() -> int:
         assert r.status_code == 401
 
         print("\n[7] /me without token → 401")
-        r = c.get("/api/auth/me")
-        assert r.status_code == 401
+        # httpx Client persists cookies; create a fresh client to truly
+        # exercise the unauthenticated path (HttpOnly cookies are otherwise
+        # auto-resent by the existing session).
+        with httpx.Client(base_url=API, timeout=10.0) as unauth:
+            r = unauth.get("/api/auth/me")
+            assert r.status_code == 401
 
         print("\n[7a] new signup defaults to viewer role")
         assert me["role"] == "viewer", me

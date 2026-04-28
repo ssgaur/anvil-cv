@@ -18,12 +18,19 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
 from sqlmodel import select
 
-from anvil_api.auth import SessionDep, hash_password, make_token, normalize_email
+from anvil_api.auth import (
+    SessionDep,
+    access_token_max_age_seconds,
+    hash_password,
+    make_token,
+    normalize_email,
+)
+from anvil_api.cookies import set_access_cookie
 from anvil_api.models import InstanceState, User, UserRole
 from anvil_api.ratelimit import hit_signup_ip
 from anvil_api.schemas import TokenOut
@@ -81,7 +88,7 @@ def status_(session: SessionDep) -> SetupStatusOut:
     response_model=TokenOut,
     dependencies=[Depends(hit_signup_ip)],
 )
-def initialize(body: SetupInitIn, session: SessionDep) -> TokenOut:
+def initialize(body: SetupInitIn, session: SessionDep, response: Response) -> TokenOut:
     # Serialize concurrent installers (Postgres only — SQLite would silently
     # no-op the lock; we are Postgres-only per project decision).
     try:
@@ -126,4 +133,6 @@ def initialize(body: SetupInitIn, session: SessionDep) -> TokenOut:
     session.commit()
     session.refresh(new_admin)
     log.info("setup wizard: created admin %s", new_admin.email)
-    return TokenOut(access_token=make_token(new_admin.id))
+    token = make_token(new_admin.id, token_version=new_admin.token_version)
+    set_access_cookie(response, token, access_token_max_age_seconds())
+    return TokenOut(access_token=token)

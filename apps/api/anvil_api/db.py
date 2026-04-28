@@ -64,7 +64,13 @@ def init_db() -> None:
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_users_role ON users(role)"
         ))
-        # CHECK constraint — drop+add to make it idempotent across schema changes.
+        # Per-user token version: bumped on password reset / logout-everywhere
+        # to invalidate access JWTs immediately (claim "tv" must match column).
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0"
+        ))
+        # CHECK constraint on role — drop+add to make it idempotent across
+        # schema changes.
         conn.execute(text("ALTER TABLE users DROP CONSTRAINT IF EXISTS ck_users_role"))
         conn.execute(text(
             "ALTER TABLE users ADD CONSTRAINT ck_users_role "

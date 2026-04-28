@@ -8,6 +8,7 @@ from sqlmodel import Session
 from anvil_api import __version__
 from anvil_api.auth import bootstrap_admin
 from anvil_api.config import settings
+from anvil_api.csrf import CSRFMiddleware
 from anvil_api.db import engine, init_db
 from anvil_api.observability import (
     MetricsMiddleware,
@@ -54,6 +55,9 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Anvil API", version=__version__, lifespan=lifespan)
 
+# CSRF must run AFTER CORS so OPTIONS preflights are handled by CORS.
+# Starlette runs middlewares in reverse-add order, so add CSRF first.
+app.add_middleware(CSRFMiddleware)
 app.add_middleware(MetricsMiddleware)
 
 app.add_middleware(
@@ -62,6 +66,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Total-Count"],
 )
 
 API = "/api"

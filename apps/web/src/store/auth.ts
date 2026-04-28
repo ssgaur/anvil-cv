@@ -8,14 +8,13 @@ interface AuthState {
   hydrate: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, name: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 export const useAuth = create<AuthState>((set) => ({
   user: null,
   loading: true,
   hydrate: async () => {
-    if (!api.token()) { set({ user: null, loading: false }); return; }
     try {
       const u = await api.me();
       set({ user: u, loading: false });
@@ -33,5 +32,5 @@ export const useAuth = create<AuthState>((set) => ({
     const u = await api.me();
     set({ user: u });
   },
-  logout: () => { api.setToken(null); set({ user: null }); },
+  logout: async () => { await api.logout(); set({ user: null }); },
 }));

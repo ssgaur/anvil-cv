@@ -1,21 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 
 /**
  * OAuth landing page.
  *
- * The backend redirects here after a successful provider login with the JWT
- * in the URL fragment (e.g. `/auth/callback#token=eyJ...`). Reading from the
- * fragment keeps the token out of any HTTP request and out of server logs.
- *
- * We:
- *   1. parse the token from `location.hash`
- *   2. store it via api.setToken
- *   3. scrub the hash from history (so the token doesn't linger)
- *   4. validate by calling /me
- *   5. navigate to /projects on success, /login on failure
+ * The backend sets an HttpOnly access cookie on its 302 response and lands
+ * the browser here with no token in the URL. We hydrate the session by
+ * calling /api/auth/me, which picks up the cookie automatically.
  */
 export function AuthCallbackPage() {
   const nav = useNavigate();
@@ -26,30 +18,12 @@ export function AuthCallbackPage() {
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
-
-    const hash = window.location.hash.startsWith("#")
-      ? window.location.hash.slice(1)
-      : window.location.hash;
-    const params = new URLSearchParams(hash);
-    const token = params.get("token");
-
-    // Always scrub the hash so the token doesn't sit in browser history.
-    window.history.replaceState(null, "", window.location.pathname);
-
-    if (!token) {
-      setError("Missing token in OAuth callback.");
-      return;
-    }
-
     (async () => {
-      api.setToken(token);
       try {
-        await api.me();
         await hydrate();
         nav("/projects", { replace: true });
       } catch {
-        api.setToken(null);
-        setError("Token rejected by server. Please sign in again.");
+        setError("Sign-in failed. Please try again.");
       }
     })();
   }, [hydrate, nav]);

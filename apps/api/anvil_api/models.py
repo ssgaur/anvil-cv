@@ -95,6 +95,10 @@ class User(SQLModel, table=True):
         default=UserRole.LABELER,
         sa_column=Column(String, nullable=False, server_default="labeler", index=True),
     )
+    # Bumped on password reset / logout-everywhere to invalidate all
+    # outstanding access JWTs immediately (refresh tokens are revoked
+    # separately in their own table).
+    token_version: int = Field(default=0, sa_column_kwargs={"nullable": False, "server_default": "0"})
     created_at: datetime = Field(default_factory=utcnow)
 
     projects: list["Project"] = Relationship(back_populates="owner")

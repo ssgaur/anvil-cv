@@ -26,7 +26,42 @@ class Settings(BaseSettings):
 
     jwt_secret: str = _DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
-    jwt_expires_minutes: int = 10080
+    # Access TTL — short by design; refresh tokens cover long sessions.
+    jwt_expires_minutes: int = Field(
+        default=30,
+        validation_alias=AliasChoices("JWT_EXPIRES_MINUTES", "jwt_expires_minutes"),
+    )
+    # Refresh TTL — long-lived, rotated on each /refresh.
+    refresh_expires_days: int = Field(
+        default=30,
+        validation_alias=AliasChoices("REFRESH_EXPIRES_DAYS", "refresh_expires_days"),
+    )
+    # Grace window: a refresh token used <N seconds ago is treated as a benign
+    # concurrent refresh (multi-tab race), not as theft. Within this window the
+    # second refresh attempt returns a benign 409 and the family stays alive.
+    refresh_reuse_grace_seconds: int = Field(
+        default=30,
+        validation_alias=AliasChoices(
+            "REFRESH_REUSE_GRACE_SECONDS", "refresh_reuse_grace_seconds"
+        ),
+    )
+
+    # --- Cookie auth ---
+    # SameSite for auth cookies. "lax" is correct for same-site SPA+API.
+    # Use "none" (forces Secure) only if frontend and API are on different
+    # eTLD+1 sites; in that case ALSO add a CSRF token (custom-header check
+    # alone is insufficient with SameSite=None).
+    cookie_samesite: str = Field(
+        default="lax",
+        validation_alias=AliasChoices("COOKIE_SAMESITE", "cookie_samesite"),
+    )
+    # If your frontend and API share an eTLD+1 (e.g. anvil.example +
+    # api.anvil.example) set this to ".anvil.example" so cookies are sent
+    # to both. Leave empty for host-only cookies (recommended for localhost).
+    cookie_domain: str = Field(
+        default="",
+        validation_alias=AliasChoices("COOKIE_DOMAIN", "cookie_domain"),
+    )
 
     # Bootstrap admin (defaults preserve existing dev/CI scripts). To skip
     # auto-creation entirely in any environment, set ANVIL_ADMIN_BOOTSTRAP=false.
