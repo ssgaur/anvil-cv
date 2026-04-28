@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../store/auth";
 import { isAdmin } from "../lib/roles";
+import { OnboardingTour } from "./OnboardingTour";
 
 export function Layout() {
   const { user, logout } = useAuth();
@@ -36,6 +37,7 @@ export function Layout() {
       <main className="flex-1 overflow-auto">
         <Outlet />
       </main>
+      <OnboardingTour />
     </div>
   );
 }

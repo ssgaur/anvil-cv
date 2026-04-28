@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Anvil workflow demo: upload images, label with SAM2, fine-tune, export COCO">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset="1" stop-color="#052e16"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="20" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <circle cx="1085" cy="125" r="190" fill="#10b981" opacity="0.13"/>
+  <circle cx="215" cy="585" r="220" fill="#22c55e" opacity="0.10"/>
+
+  <text x="70" y="78" fill="#ecfdf5" font-family="Inter, ui-sans-serif, system-ui" font-size="42" font-weight="800">Anvil</text>
+  <text x="70" y="116" fill="#a7f3d0" font-family="Inter, ui-sans-serif, system-ui" font-size="22">Open-source annotation with SAM2 fine-tuning built in</text>
+
+  <g transform="translate(70 155)" filter="url(#shadow)">
+    <rect width="1140" height="485" rx="26" fill="url(#panel)" stroke="#334155"/>
+    <rect x="0" y="0" width="1140" height="56" rx="26" fill="#020617"/>
+    <circle cx="28" cy="28" r="7" fill="#ef4444"/>
+    <circle cx="52" cy="28" r="7" fill="#f59e0b"/>
+    <circle cx="76" cy="28" r="7" fill="#22c55e"/>
+    <text x="108" y="35" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo" font-size="15">localhost:5173 / Anvil Workview</text>
+
+    <g transform="translate(28 86)">
+      <rect width="250" height="360" rx="18" fill="#020617" stroke="#1f2937"/>
+      <text x="24" y="42" fill="#e5e7eb" font-family="Inter, ui-sans-serif, system-ui" font-size="20" font-weight="700">1. Upload</text>
+      <text x="24" y="75" fill="#94a3b8" font-family="Inter, ui-sans-serif, system-ui" font-size="15">Drop images or import COCO</text>
+      <g transform="translate(34 110)">
+        <rect width="72" height="72" rx="10" fill="#064e3b"/>
+        <path d="M36 10 C70 28 64 58 36 66 C8 58 2 28 36 10Z" fill="#22c55e"/>
+        <rect x="92" width="72" height="72" rx="10" fill="#0f172a"/>
+        <path d="M128 12 C160 35 150 60 121 66 C101 50 100 25 128 12Z" fill="#84cc16"/>
+        <rect x="46" y="92" width="72" height="72" rx="10" fill="#0f172a"/>
+        <path d="M82 105 C110 126 106 154 82 160 C58 154 54 126 82 105Z" fill="#16a34a"/>
+      </g>
+      <rect x="24" y="300" width="202" height="34" rx="8" fill="#10b981"/>
+      <text x="73" y="322" fill="#022c22" font-family="Inter, ui-sans-serif, system-ui" font-size="14" font-weight="800">Load sample data</text>
+    </g>
+
+    <g transform="translate(315 86)">
+      <rect width="250" height="360" rx="18" fill="#020617" stroke="#1f2937"/>
+      <text x="24" y="42" fill="#e5e7eb" font-family="Inter, ui-sans-serif, system-ui" font-size="20" font-weight="700">2. Label</text>
+      <text x="24" y="75" fill="#94a3b8" font-family="Inter, ui-sans-serif, system-ui" font-size="15">Click once, SAM2 masks</text>
+      <rect x="32" y="105" width="186" height="186" rx="16" fill="#052e16" stroke="#166534"/>
+      <path d="M125 122 C200 162 191 245 125 273 C59 245 50 162 125 122Z" fill="#22c55e" opacity="0.88"/>
+      <path d="M125 125 C132 180 131 230 125 270" fill="none" stroke="#bbf7d0" stroke-width="5" stroke-linecap="round"/>
+      <circle cx="145" cy="190" r="16" fill="#f59e0b"/>
+      <circle cx="122" cy="195" r="9" fill="#10b981" stroke="#ecfdf5" stroke-width="4"/>
+      <path d="M120 195 L172 242" stroke="#ecfdf5" stroke-width="3" stroke-dasharray="7 7"/>
+      <text x="44" y="324" fill="#a7f3d0" font-family="ui-monospace, SFMono-Regular, Menlo" font-size="14">A + click -> Enter</text>
+    </g>
+
+    <g transform="translate(602 86)">
+      <rect width="250" height="360" rx="18" fill="#020617" stroke="#1f2937"/>
+      <text x="24" y="42" fill="#e5e7eb" font-family="Inter, ui-sans-serif, system-ui" font-size="20" font-weight="700">3. Fine-tune</text>
+      <text x="24" y="75" fill="#94a3b8" font-family="Inter, ui-sans-serif, system-ui" font-size="15">Train a SAM2 LoRA adapter</text>
+      <g transform="translate(32 115)">
+        <rect width="186" height="120" rx="14" fill="#0f172a" stroke="#334155"/>
+        <polyline points="18,94 50,72 82,82 114,43 150,52 170,25" fill="none" stroke="#10b981" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="170" cy="25" r="7" fill="#34d399"/>
+        <text x="18" y="32" fill="#e5e7eb" font-family="ui-monospace, SFMono-Regular, Menlo" font-size="13">val IoU</text>
+      </g>
+      <rect x="42" y="270" width="166" height="34" rx="8" fill="#1f2937" stroke="#10b981"/>
+      <text x="75" y="292" fill="#d1fae5" font-family="Inter, ui-sans-serif, system-ui" font-size="14" font-weight="700">A/B compare</text>
+    </g>
+
+    <g transform="translate(889 86)">
+      <rect width="222" height="360" rx="18" fill="#020617" stroke="#1f2937"/>
+      <text x="24" y="42" fill="#e5e7eb" font-family="Inter, ui-sans-serif, system-ui" font-size="20" font-weight="700">4. Export</text>
+      <text x="24" y="75" fill="#94a3b8" font-family="Inter, ui-sans-serif, system-ui" font-size="15">COCO, no lock-in</text>
+      <g transform="translate(45 120)">
+        <path d="M26 0 H112 L150 38 V176 H26 Z" fill="#0f172a" stroke="#475569" stroke-width="3"/>
+        <path d="M112 0 V38 H150" fill="none" stroke="#475569" stroke-width="3"/>
+        <text x="48" y="82" fill="#10b981" font-family="ui-monospace, SFMono-Regular, Menlo" font-size="18" font-weight="700">{ }</text>
+        <text x="44" y="112" fill="#d1fae5" font-family="Inter, ui-sans-serif, system-ui" font-size="15" font-weight="700">COCO</text>
+      </g>
+      <text x="31" y="324" fill="#a7f3d0" font-family="Inter, ui-sans-serif, system-ui" font-size="14">No telemetry. Self-hosted.</text>
+    </g>
+  </g>
+</svg>
+

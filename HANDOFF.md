@@ -74,8 +74,27 @@ Verification for this batch:
 - `ANVIL_ADMIN_EMAIL=admin@anvil.dev python3 scripts/prod_features_e2e.py` → ALL OK
   (covers hierarchy, cycle, kp-schema lock, polyline / OBB / keypoints validation + create, filters, sort, all 4 bulk endpoints, COCO export)
 
+### Track B — OSS Launch Readiness (DONE)
+Must-have + strongly-recommended OSS launch work is complete:
+- README above-fold pitch + comparison table + no-telemetry stance + local demo GIF (`docs/assets/anvil-demo.gif`).
+- Standard community files: `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`.
+- Sample data loader: `scripts/load_sample_dataset.py` generates synthetic PNGs, creates project/dataset/classes, uploads images, and seeds annotations with no third-party Python deps.
+- Demo recording guide: `docs/launch/DEMO_RECORDING.md`.
+- Keyboard help modal updated with `L`/`O`/`K` tool shortcuts.
+- First-run onboarding tour added in the app shell, persisted with localStorage.
+- MkDocs site config + GitHub Pages workflow (`mkdocs.yml`, `.github/workflows/docs.yml`).
+- GHCR publish workflow for tagged releases (`.github/workflows/ghcr.yml`).
+
+Launch-readiness verification:
+- `python3 -m ruff check apps/api/anvil_api scripts/load_sample_dataset.py` → All checks passed
+- `python3 -m py_compile scripts/load_sample_dataset.py` → clean
+- `cd apps/web && npx tsc --noEmit` → clean
+- `mkdocs build --strict` → clean
+- `ANVIL_ADMIN_EMAIL=admin@anvil.dev ANVIL_ADMIN_PASSWORD=admin python3 scripts/load_sample_dataset.py --count 4` → sample project loaded
+- Isolated fresh-install smoke (separate Compose project + alternate ports, no dev-data wipe): build+wait all services, `/ready`, web root, and sample loader all OK; smoke stack then removed with `down -v`.
+
 **Open product-dev todos remaining (in SQL `todos`, prefix `prod-*`):**
-`prod-active-learning-queue`, `prod-api-tokens`, `prod-audit-log`, `prod-export-bundle-model`, `prod-export-yolo`, `prod-image-comments-mentions`, `prod-keyboard-help-modal`, `prod-onboarding-tour`, `prod-quality-dashboard`, `prod-storage-s3-backend`, `prod-task-assignment`, `prod-webhooks`, `prod-windows-verify`. See `docs/FUTURE.md` for directional backlog.
+`prod-active-learning-queue`, `prod-api-tokens`, `prod-audit-log`, `prod-export-bundle-model`, `prod-export-yolo`, `prod-image-comments-mentions`, `prod-quality-dashboard`, `prod-storage-s3-backend`, `prod-task-assignment`, `prod-webhooks`, `prod-windows-verify`. See `docs/FUTURE.md` for directional backlog.
 
 Track B folder anchor: **`apps/`, `compose.yml`, root configs.** Do NOT touch `benchmarks/`.
 

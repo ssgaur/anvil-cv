@@ -42,7 +42,8 @@ Per-image review status (approved / rejected / needs-changes), predefined reject
 
 ### Is there team / RBAC support?
 
-Single-user today. Org / members / roles is on the roadmap (Phase 4-ish).
+Yes. Anvil ships admin/reviewer/labeler/viewer roles, an admin user-management
+screen, review locks for approved images, and signed file URLs.
 
 ### How do I self-host in production?
 
@@ -58,7 +59,7 @@ Both are great open-source labelers. Neither has built-in fine-tuning. Anvil's b
 
 ### Can I contribute?
 
-Yes — see [CONTRIBUTING.md](../CONTRIBUTING.md). The fastest help right now: try it, file issues. The next-fastest: pick something off [ROADMAP.md](ROADMAP.md).
+Yes — see [CONTRIBUTING.md](https://github.com/ssgaur/anvil-cv/blob/main/CONTRIBUTING.md). The fastest help right now: try it, file issues. The next-fastest: pick something off [ROADMAP.md](ROADMAP.md).
 
 ### How do I report a bug?
 

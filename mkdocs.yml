@@ -1,0 +1,39 @@
+site_name: Anvil
+site_description: Open-source image annotation with built-in SAM2 fine-tuning
+repo_url: https://github.com/ssgaur/anvil-cv
+repo_name: ssgaur/anvil-cv
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+  palette:
+    - scheme: slate
+      primary: green
+      accent: emerald
+
+nav:
+  - Home: index.md
+  - Features: FEATURES.md
+  - Architecture: ARCHITECTURE.md
+  - Fine-tuning: FINE_TUNING.md
+  - API: API.md
+  - Dev setup: DEV_SETUP.md
+  - FAQ: FAQ.md
+  - Roadmap: ROADMAP.md
+  - Future backlog: FUTURE.md
+  - Launch demo script: launch/DEMO_RECORDING.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
