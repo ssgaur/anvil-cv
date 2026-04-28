@@ -56,7 +56,26 @@ Closed hardening todos (in SQL `todos` table):
 
 Remaining infra item (deferred, not blocking): `hardening-windows` — verify on Windows Docker Desktop + bare Linux. Needs a Windows host; deferred until needed.
 
-**Now moving to product-development phase.** Open product-dev todos (in SQL `todos`, prefix `prod-*`) — annotation features, model loop, exports, team/quality. See `docs/FUTURE.md` for the directional backlog.
+### Track B — Product Development Phase 1 (DONE)
+First batch of annotation-tool features shipped to `main` (backend + UI + COCO export):
+
+| Todo | Commit(s) | Notes |
+|---|---|---|
+| `prod-polyline-tool` | `7906544` (api) + `4fab9b8` (web) | Open polyline geometry; key `L`; COCO export under `annotation.anvil.geometry_type` (Anvil extension). |
+| `prod-rotated-bbox` | `7906544` + `4fab9b8` | OBB stored as `{cx,cy,w,h,angle_rad}`; key `O`; angle normalized to `[-π/2, π/2)`; exports 4 rotated corners + `annotation.anvil.obb`. |
+| `prod-keypoint-tool` | `7906544` + `4fab9b8` | Per-class keypoint schema (names + edges). Key `K` drops in schema order; Cmd-click = occluded (v=1). COCO `keypoints` flat list + 1-based skeleton. Schema **immutable** once any annotation exists (409). |
+| `prod-class-hierarchy` | `7906544` + `5621786` | `Class.parent_id`; same-project enforced; cycle prevention; depth ≤ 5; delete-blocks-children (409). UI: tree-indented Classes tab with parent picker (filters out descendants); COCO `category.supercategory` + `category.anvil.path`. |
+| `prod-bulk-ops` | `7906544` + `5621786` | 4 endpoints all dataset-scoped, MAX_BULK=500, per-id failure list: bulk-delete, bulk-review (reset/reopen/reject), bulk-move (blocks `approved`), bulk-delete-by-class (skips locked images by default). UI: sticky action bar + multi-select with shift-range. |
+| `prod-image-filters` | `7906544` + `5621786` | Server-side filters: `has_annotations`, repeatable `class_id`, sort variants (`oldest`/`recent`/`filename`/`most_labels`/`fewest_labels`/`uncertainty`), stable secondary sort on `Image.id`, new indexes. UI uses URL search params so filters survive refresh / shared links. |
+
+Verification for this batch:
+- `python3 -m ruff check apps/api/anvil_api` → All checks passed
+- `cd apps/web && npx tsc --noEmit` → clean
+- `ANVIL_ADMIN_EMAIL=admin@anvil.dev python3 scripts/prod_features_e2e.py` → ALL OK
+  (covers hierarchy, cycle, kp-schema lock, polyline / OBB / keypoints validation + create, filters, sort, all 4 bulk endpoints, COCO export)
+
+**Open product-dev todos remaining (in SQL `todos`, prefix `prod-*`):**
+`prod-active-learning-queue`, `prod-api-tokens`, `prod-audit-log`, `prod-export-bundle-model`, `prod-export-yolo`, `prod-image-comments-mentions`, `prod-keyboard-help-modal`, `prod-onboarding-tour`, `prod-quality-dashboard`, `prod-storage-s3-backend`, `prod-task-assignment`, `prod-webhooks`, `prod-windows-verify`. See `docs/FUTURE.md` for directional backlog.
 
 Track B folder anchor: **`apps/`, `compose.yml`, root configs.** Do NOT touch `benchmarks/`.
 
@@ -80,7 +99,7 @@ Track B folder anchor: **`apps/`, `compose.yml`, root configs.** Do NOT touch `b
 - M1 Pro 16GB: full fine-tune with `base_plus` will OOM. Use `--variant tiny` or skip.
 
 ## Latest known-good commit on `main`
-`e813dfa feat(auth): rotating refresh tokens + password reset flow`
+`5621786 feat(web): bulk-ops UI, server-side filters/sort, class hierarchy + keypoint schema editor`
 
 ## Starting a new session — paste this
 > "Read `~/PersonalDev/anvil-cv/HANDOFF.md`. We are working on Track [A or B] only. Don't touch the other track's folders unless I explicitly ask. Then check `todos` table in SQL for current pending items in this track."
