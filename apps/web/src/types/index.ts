@@ -96,7 +96,12 @@ export interface ImageRow {
   open_comment_count: number;
 }
 
-export type GeometryType = "polygon" | "bbox" | "brush";
+export type GeometryType = "polygon" | "bbox" | "brush" | "polyline" | "keypoints" | "obb";
+
+export interface KeypointSchema {
+  keypoints: { name: string; color?: string }[];
+  edges: [number, number][];
+}
 
 export type ClassPropertyType = "single" | "multi" | "text";
 
@@ -118,6 +123,8 @@ export interface ClassRow {
   geometry_type: GeometryType;
   description: string;
   annotation_count: number;
+  parent_id: string | null;
+  keypoint_schema: KeypointSchema | null;
 }
 
 export type AnnotationSource = "manual" | "model" | "imported";
@@ -141,7 +148,11 @@ export interface Annotation {
   image_id: string;
   class_id: string;
   geometry_type: GeometryType;
-  geometry: { points?: [number, number][]; x?: number; y?: number; w?: number; h?: number };
+  geometry: {
+    points?: number[][];        // polygon/polyline: [[x,y],...]; keypoints: [[x,y,v],...]
+    x?: number; y?: number; w?: number; h?: number;  // bbox
+    cx?: number; cy?: number; angle_rad?: number;     // obb (w/h reused)
+  };
   source: AnnotationSource;
   confidence: number | null;
   properties: Record<string, string | string[]>;

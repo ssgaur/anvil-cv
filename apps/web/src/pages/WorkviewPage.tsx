@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Circle, Image as KImage, Layer, Line, Rect, Stage } from "react-konva";
 import Konva from "konva";
@@ -9,7 +9,7 @@ import { useAuth } from "../store/auth";
 import { isLabeler, isReviewer } from "../lib/roles";
 import type { Annotation, ClassProperty, ClassRow, CommentRow, ImageRow, ModelVersion } from "../types";
 
-type Tool = "pan" | "auto" | "polygon" | "bbox" | "brush" | "comment";
+type Tool = "pan" | "auto" | "polygon" | "polyline" | "bbox" | "obb" | "brush" | "keypoint" | "comment";
 
 export function WorkviewPage() {
   const { projectId = "", datasetId = "", imageId = "" } = useParams();
@@ -26,6 +26,10 @@ export function WorkviewPage() {
   const [tool, setTool] = useState<Tool>("auto");
   const [activeClassId, setActiveClassId] = useState<string | null>(null);
   const [polyPoints, setPolyPoints] = useState<[number, number][]>([]);
+  // Polyline (open) accumulates points like polygon; commit on Enter or dbl-click.
+  const [polylinePoints, setPolylinePoints] = useState<[number, number][]>([]);
+  // Keypoint creation: building an array of [x,y,v] per the active class's schema.
+  const [kpDrops, setKpDrops] = useState<[number, number, 0 | 1 | 2][]>([]);
   const [bboxStart, setBboxStart] = useState<[number, number] | null>(null);
   const [bboxEnd, setBboxEnd] = useState<[number, number] | null>(null);
   const [pending, setPending] = useState<{
@@ -430,17 +434,22 @@ export function WorkviewPage() {
       if (e.key === "v") setTool("pan");
       else if (e.key === "a") setTool("auto");
       else if (e.key === "p") setTool("polygon");
+      else if (e.key === "l") setTool("polyline");
       else if (e.key === "b") setTool("bbox");
+      else if (e.key === "o") setTool("obb");
       else if (e.key === "r") setTool("brush");
+      else if (e.key === "k") setTool("keypoint");
       else if (e.key === "t") setTool("comment");
       else if (e.key === "Escape") {
         if (showHelp) { setShowHelp(false); return; }
-        setPolyPoints([]); setBboxStart(null); setBboxEnd(null);
+        setPolyPoints([]); setPolylinePoints([]); setBboxStart(null); setBboxEnd(null);
+        setKpDrops([]);
         clearPrompts();
         setSelectedAnnId(null); setEditPoly(null); setEditBbox(null);
         if (tool === "brush") clearMask();
       }
       else if (e.key === "Enter" && tool === "polygon" && polyPoints.length >= 3) commitPolygon();
+      else if (e.key === "Enter" && tool === "polyline" && polylinePoints.length >= 2) commitPolyline();
       else if (e.key === "Enter" && tool === "brush" && hasBrushStrokes) commitBrush();
       else if (e.key === "[" && tool === "brush") setBrushSize((s) => Math.max(2, Math.round(s * 0.8)));
       else if (e.key === "]" && tool === "brush") setBrushSize((s) => Math.min(200, Math.round(s * 1.25)));
@@ -583,6 +592,24 @@ export function WorkviewPage() {
       }
     } else if (tool === "polygon") {
       setPolyPoints([...polyPoints, [ix, iy]]);
+    } else if (tool === "polyline") {
+      setPolylinePoints([...polylinePoints, [ix, iy]]);
+    } else if (tool === "keypoint") {
+      const cls = classes.find((c) => c.id === activeClassId);
+      if (!cls) { setError("Pick a class first."); return; }
+      if (cls.geometry_type !== "keypoints" || !cls.keypoint_schema) {
+        setError("Active class must be a keypoints class with a schema.");
+        return;
+      }
+      const total = cls.keypoint_schema.keypoints.length;
+      if (kpDrops.length >= total) return;
+      // Cmd/Ctrl-click = visibility 1 (occluded but labeled); plain click = 2 (visible).
+      const v: 1 | 2 = (e.evt.metaKey || e.evt.ctrlKey) ? 1 : 2;
+      const next: [number, number, 0 | 1 | 2][] = [...kpDrops, [Math.round(ix), Math.round(iy), v]];
+      setKpDrops(next);
+      if (next.length === total) {
+        commitKeypoints(next);
+      }
     } else if (tool === "comment") {
       setPendingPin({ x: Math.round(ix), y: Math.round(iy) });
       setPendingBody("");
@@ -603,7 +630,7 @@ export function WorkviewPage() {
       paintStroke(null, pt, erase);
       return;
     }
-    if (tool === "bbox") {
+    if (tool === "bbox" || tool === "obb") {
       const stage = stageRef.current; if (!stage) return;
       const p = stage.getPointerPosition(); if (!p) return;
       setBboxStart(imagePoint(p.x, p.y));
@@ -628,7 +655,7 @@ export function WorkviewPage() {
       brushingRef.current = { erase, lastPt: pt };
       return;
     }
-    if (tool === "bbox" && bboxStart) {
+    if ((tool === "bbox" || tool === "obb") && bboxStart) {
       setBboxEnd(imagePoint(p.x, p.y));
       return;
     }
@@ -647,20 +674,28 @@ export function WorkviewPage() {
       brushingRef.current = null;
       return;
     }
-    if (tool === "bbox" && bboxStart && bboxEnd && image && activeClassId) {
+    if ((tool === "bbox" || tool === "obb") && bboxStart && bboxEnd && image && activeClassId) {
       const x = Math.min(bboxStart[0], bboxEnd[0]);
       const y = Math.min(bboxStart[1], bboxEnd[1]);
       const w = Math.abs(bboxEnd[0] - bboxStart[0]);
       const h = Math.abs(bboxEnd[1] - bboxStart[1]);
+      const isObb = tool === "obb";
       setBboxStart(null); setBboxEnd(null);
       if (w < 4 || h < 4) return;
       try {
-        const a = await api.createAnnotation(imageId, {
-          class_id: activeClassId,
-          geometry_type: "bbox",
-          geometry: { x, y, w, h },
-          source: "manual",
-        });
+        const a = isObb
+          ? await api.createAnnotation(imageId, {
+              class_id: activeClassId,
+              geometry_type: "obb",
+              geometry: { cx: x + w / 2, cy: y + h / 2, w, h, angle_rad: 0 },
+              source: "manual",
+            })
+          : await api.createAnnotation(imageId, {
+              class_id: activeClassId,
+              geometry_type: "bbox",
+              geometry: { x, y, w, h },
+              source: "manual",
+            });
         setAnnotations((arr) => [...arr, a]);
         pushOp({ kind: "create", ann: a });
       } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
@@ -692,6 +727,39 @@ export function WorkviewPage() {
       pushOp({ kind: "create", ann: a });
       setPolyPoints([]);
     } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
+  }
+
+  async function commitPolyline() {
+    if (!image || !activeClassId || polylinePoints.length < 2) return;
+    try {
+      const a = await api.createAnnotation(imageId, {
+        class_id: activeClassId,
+        geometry_type: "polyline",
+        geometry: { points: polylinePoints },
+        source: "manual",
+      });
+      setAnnotations((arr) => [...arr, a]);
+      pushOp({ kind: "create", ann: a });
+      setPolylinePoints([]);
+    } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
+  }
+
+  async function commitKeypoints(pts: [number, number, 0 | 1 | 2][]) {
+    if (!image || !activeClassId) return;
+    try {
+      const a = await api.createAnnotation(imageId, {
+        class_id: activeClassId,
+        geometry_type: "keypoints",
+        geometry: { points: pts },
+        source: "manual",
+      });
+      setAnnotations((arr) => [...arr, a]);
+      pushOp({ kind: "create", ann: a });
+      setKpDrops([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "save failed");
+      setKpDrops([]);
+    }
   }
 
   async function commitPending() {
@@ -909,8 +977,11 @@ export function WorkviewPage() {
           <ToolBtn active={tool === "pan"} onClick={() => setTool("pan")} label="Pan (V)" icon="✋" />
           <ToolBtn active={tool === "auto"} onClick={() => setTool("auto")} label="Auto-Annotate (A) — click to segment, shift-click +pt, alt-click −pt, drag for box" icon="✨" />
           <ToolBtn active={tool === "polygon"} onClick={() => setTool("polygon")} label="Polygon (P)" icon="⬡" />
+          <ToolBtn active={tool === "polyline"} onClick={() => setTool("polyline")} label="Polyline (L) — click to add vertices, Enter to commit (open path)" icon="〰" />
           <ToolBtn active={tool === "bbox"} onClick={() => setTool("bbox")} label="Bounding Box (B)" icon="▭" />
+          <ToolBtn active={tool === "obb"} onClick={() => setTool("obb")} label="Rotated Box (O) — drag for axis-aligned, then rotate via handle (coming soon)" icon="◇" />
           <ToolBtn active={tool === "brush"} onClick={() => setTool("brush")} label="Brush (R) — paint a mask, shift to erase, [ / ] resize, Enter to commit" icon="🖌" />
+          <ToolBtn active={tool === "keypoint"} onClick={() => setTool("keypoint")} label="Keypoint (K) — pick a keypoints class, then click to drop each keypoint in order; Cmd-click = occluded" icon="⊙" />
           <div className="h-px w-8 bg-neutral-800 my-1" />
           <ToolBtn active={tool === "comment"} onClick={() => setTool("comment")} label="Comment (T) — click on image to drop a pin and leave a note for the reviewer" icon="💬" />
         </div>
@@ -1040,6 +1111,87 @@ export function WorkviewPage() {
                       onMouseEnter={() => setHoverAnnId(a.id)}
                       onMouseLeave={() => setHoverAnnId(null)}
                     />
+                  );
+                }
+                if (a.geometry_type === "polyline" && a.geometry.points) {
+                  const flat = a.geometry.points.flat();
+                  return (
+                    <Line
+                      key={a.id}
+                      points={flat}
+                      stroke={color}
+                      strokeWidth={(isSelected ? 4 : 2.5) / view.scale}
+                      lineCap="round"
+                      lineJoin="round"
+                      onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
+                      onMouseEnter={() => setHoverAnnId(a.id)}
+                      onMouseLeave={() => setHoverAnnId(null)}
+                    />
+                  );
+                }
+                if (a.geometry_type === "obb" && a.geometry.cx !== undefined) {
+                  const w = a.geometry.w ?? 0;
+                  const h = a.geometry.h ?? 0;
+                  const cx = a.geometry.cx ?? 0;
+                  const cy = a.geometry.cy ?? 0;
+                  const angRad = a.geometry.angle_rad ?? 0;
+                  // Konva uses degrees; rotation is around (x,y); offset positions
+                  // the rect so its center aligns with (cx,cy).
+                  return (
+                    <Rect
+                      key={a.id}
+                      x={cx} y={cy}
+                      width={w} height={h}
+                      offsetX={w / 2} offsetY={h / 2}
+                      rotation={(angRad * 180) / Math.PI}
+                      stroke={color}
+                      strokeWidth={(isSelected ? 3 : 2) / view.scale}
+                      fill={color + "22"}
+                      onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
+                      onMouseEnter={() => setHoverAnnId(a.id)}
+                      onMouseLeave={() => setHoverAnnId(null)}
+                    />
+                  );
+                }
+                if (a.geometry_type === "keypoints" && a.geometry.points) {
+                  const cls2 = classMap.get(a.class_id);
+                  const schema = cls2?.keypoint_schema;
+                  const r = (isSelected ? 6 : 4) / view.scale;
+                  const sw = (isSelected ? 2.5 : 1.5) / view.scale;
+                  return (
+                    <React.Fragment key={a.id}>
+                      {schema?.edges.map(([i, j], k) => {
+                        const pi = a.geometry.points![i];
+                        const pj = a.geometry.points![j];
+                        if (!pi || !pj) return null;
+                        if (pi[2] === 0 || pj[2] === 0) return null;
+                        return (
+                          <Line
+                            key={`e-${a.id}-${k}`}
+                            points={[pi[0], pi[1], pj[0], pj[1]]}
+                            stroke={color} strokeWidth={sw}
+                            opacity={0.7}
+                            onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
+                          />
+                        );
+                      })}
+                      {a.geometry.points.map((p, i) => {
+                        const v = p[2];
+                        if (v === 0) return null;
+                        return (
+                          <Circle
+                            key={`kp-${a.id}-${i}`}
+                            x={p[0]} y={p[1]} radius={r}
+                            fill={v === 2 ? color : "#000000"}
+                            stroke={color} strokeWidth={sw}
+                            opacity={v === 2 ? 1 : 0.6}
+                            onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
+                            onMouseEnter={() => setHoverAnnId(a.id)}
+                            onMouseLeave={() => setHoverAnnId(null)}
+                          />
+                        );
+                      })}
+                    </React.Fragment>
                   );
                 }
                 return null;
@@ -1191,6 +1343,42 @@ export function WorkviewPage() {
                   strokeWidth={2 / view.scale}
                   closed={false}
                 />
+              )}
+              {polylinePoints.length > 0 && activeClass && (
+                <>
+                  <Line
+                    points={polylinePoints.flat()}
+                    stroke={activeClass.color}
+                    strokeWidth={2.5 / view.scale}
+                    closed={false}
+                    lineCap="round"
+                    lineJoin="round"
+                    dash={[6 / view.scale, 3 / view.scale]}
+                  />
+                  {polylinePoints.map(([px, py], i) => (
+                    <Circle
+                      key={`pl-${i}`}
+                      x={px} y={py} radius={3.5 / view.scale}
+                      fill={activeClass.color}
+                      stroke="#ffffff"
+                      strokeWidth={1 / view.scale}
+                    />
+                  ))}
+                </>
+              )}
+              {kpDrops.length > 0 && activeClass && (
+                <>
+                  {kpDrops.map(([px, py, v], i) => (
+                    <Circle
+                      key={`kpd-${i}`}
+                      x={px} y={py} radius={5 / view.scale}
+                      fill={v === 2 ? activeClass.color : "#000000"}
+                      stroke={activeClass.color}
+                      strokeWidth={2 / view.scale}
+                      opacity={v === 2 ? 1 : 0.6}
+                    />
+                  ))}
+                </>
               )}
               {bboxStart && bboxEnd && activeClass && (
                 <Rect

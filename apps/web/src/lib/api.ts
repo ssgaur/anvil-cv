@@ -1,6 +1,31 @@
 import type {
-  AdminUser, Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, CompareResult, Dataset, ImageRow, ModelVersion, PredictResponse, Project, ReviewStatus, User, UserRole,
+  AdminUser, Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, CompareResult, Dataset, ImageRow, KeypointSchema, ModelVersion, PredictResponse, Project, ReviewStatus, User, UserRole,
 } from "../types";
+
+export type ImageSort =
+  | "recent" | "oldest" | "filename" | "most_labels" | "fewest_labels" | "uncertainty";
+
+export interface ImageListOpts {
+  status?: string;
+  review_status?: ReviewStatus;
+  has_annotations?: boolean;
+  class_id?: string[];
+  sort?: ImageSort;
+  limit?: number;
+  offset?: number;
+}
+
+function buildImageQuery(opts?: ImageListOpts): string {
+  const q = new URLSearchParams();
+  if (opts?.status) q.set("status_filter", opts.status);
+  if (opts?.review_status) q.set("review_status", opts.review_status);
+  if (opts?.has_annotations !== undefined) q.set("has_annotations", String(opts.has_annotations));
+  if (opts?.class_id) opts.class_id.forEach((c) => q.append("class_id", c));
+  if (opts?.sort) q.set("sort", opts.sort);
+  if (opts?.limit) q.set("limit", String(opts.limit));
+  if (opts?.offset) q.set("offset", String(opts.offset));
+  return q.toString();
+}
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -175,14 +200,9 @@ export const api = {
   // Images
   listImages: (
     projectId: string, datasetId: string,
-    opts?: { status?: string; review_status?: ReviewStatus; limit?: number; offset?: number },
+    opts?: ImageListOpts,
   ) => {
-    const q = new URLSearchParams();
-    if (opts?.status) q.set("status_filter", opts.status);
-    if (opts?.review_status) q.set("review_status", opts.review_status);
-    if (opts?.limit) q.set("limit", String(opts.limit));
-    if (opts?.offset) q.set("offset", String(opts.offset));
-    const qs = q.toString();
+    const qs = buildImageQuery(opts);
     return req<ImageRow[]>(
       `/api/projects/${projectId}/datasets/${datasetId}/images${qs ? `?${qs}` : ""}`,
     );
@@ -190,14 +210,9 @@ export const api = {
   /** Paginated variant returning {items,total} (uses X-Total-Count header). */
   listImagesPaged: async (
     projectId: string, datasetId: string,
-    opts?: { status?: string; review_status?: ReviewStatus; limit?: number; offset?: number },
+    opts?: ImageListOpts,
   ): Promise<{ items: ImageRow[]; total: number }> => {
-    const q = new URLSearchParams();
-    if (opts?.status) q.set("status_filter", opts.status);
-    if (opts?.review_status) q.set("review_status", opts.review_status);
-    if (opts?.limit) q.set("limit", String(opts.limit));
-    if (opts?.offset) q.set("offset", String(opts.offset));
-    const qs = q.toString();
+    const qs = buildImageQuery(opts);
     const r = await fetch(
       `${API}/api/projects/${projectId}/datasets/${datasetId}/images${qs ? `?${qs}` : ""}`,
       { credentials: "include" },
@@ -259,12 +274,14 @@ export const api = {
   // Classes
   listClasses: (projectId: string) =>
     req<ClassRow[]>(`/api/projects/${projectId}/classes`),
-  createClass: (projectId: string, body: { name: string; color?: string; geometry_type?: string; description?: string }) =>
+  createClass: (projectId: string, body: { name: string; color?: string; geometry_type?: string; description?: string; parent_id?: string | null; keypoint_schema?: KeypointSchema | null }) =>
     req<ClassRow>(`/api/projects/${projectId}/classes`, {
       method: "POST", body: JSON.stringify(body),
     }),
   patchClass: (projectId: string, classId: string, body: {
     name?: string; color?: string; geometry_type?: string; description?: string;
+    parent_id?: string | null; set_parent_root?: boolean;
+    keypoint_schema?: KeypointSchema | null;
   }) =>
     req<ClassRow>(`/api/projects/${projectId}/classes/${classId}`, {
       method: "PATCH", body: JSON.stringify(body),
@@ -361,6 +378,37 @@ export const api = {
     req<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   adminDeleteUser: (id: string) =>
     req<void>(`/api/admin/users/${id}`, { method: "DELETE" }),
+
+  // Bulk ops on images / annotations
+  bulkDeleteImages: (projectId: string, datasetId: string, imageIds: string[]) =>
+    req<{ ok: string[]; failed: { id: string; reason: string }[] }>(
+      `/api/projects/${projectId}/datasets/${datasetId}/images/bulk-delete`,
+      { method: "POST", body: JSON.stringify({ image_ids: imageIds }) },
+    ),
+  bulkReviewImages: (
+    projectId: string, datasetId: string,
+    body: { image_ids: string[]; action: "reset" | "reopen" | "reject"; reason?: string },
+  ) =>
+    req<{ ok: string[]; failed: { id: string; reason: string }[] }>(
+      `/api/projects/${projectId}/datasets/${datasetId}/images/bulk-review`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  bulkMoveImages: (
+    projectId: string, datasetId: string,
+    body: { image_ids: string[]; target_dataset_id: string },
+  ) =>
+    req<{ ok: string[]; failed: { id: string; reason: string }[] }>(
+      `/api/projects/${projectId}/datasets/${datasetId}/images/bulk-move`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  bulkDeleteAnnotationsByClass: (
+    projectId: string, datasetId: string,
+    body: { class_id: string; image_ids?: string[]; include_locked?: boolean },
+  ) =>
+    req<{ ok: string[]; failed: { id: string; reason: string }[] }>(
+      `/api/projects/${projectId}/datasets/${datasetId}/annotations/bulk-delete-by-class`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 
   // First-run setup wizard
   setupStatus: () => req<{ needs_setup: boolean }>(`/api/setup/status`),
