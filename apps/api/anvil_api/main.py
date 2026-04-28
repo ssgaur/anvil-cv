@@ -25,7 +25,9 @@ from anvil_api.routes import (
     images,
     models,
     oauth,
+    password_reset,
     projects,
+    refresh,
     setup,
 )
 
@@ -81,6 +83,8 @@ app.include_router(comments.router, prefix=API)
 app.include_router(models.router, prefix=API)
 app.include_router(admin.router, prefix=API)
 app.include_router(setup.router, prefix=API)
+app.include_router(refresh.router, prefix=API)
+app.include_router(password_reset.router, prefix=API)
 
 
 @app.get("/health")

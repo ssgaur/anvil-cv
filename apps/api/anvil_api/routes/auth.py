@@ -6,23 +6,26 @@ from anvil_api.auth import (
     SessionDep,
     access_token_max_age_seconds,
     hash_password,
+    hmac_refresh_token,
     make_token,
     normalize_email,
     verify_password,
 )
 from anvil_api.config import settings
 from anvil_api.cookies import (
+    REFRESH_COOKIE,
     clear_access_cookie,
     clear_refresh_cookie,
     set_access_cookie,
 )
-from anvil_api.models import User, UserRole
+from anvil_api.models import User, UserRefreshToken, UserRole
 from anvil_api.ratelimit import (
     hit_login_email,
     hit_login_ip,
     hit_signup_ip,
     reset_login_email,
 )
+from anvil_api.routes.refresh import issue_refresh, revoke_family
 from anvil_api.schemas import LoginIn, ProvidersOut, SignupIn, TokenOut, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -36,14 +39,15 @@ def _resolve_default_signup_role() -> UserRole:
         return UserRole.VIEWER
 
 
-def _issue_session(response: Response, user: User) -> str:
-    """Mint an access token, set the access cookie, return the token string.
-
-    Refresh-token issuance is wired separately in routes/refresh.py so that
-    bearer-only callers (CLI/e2e) can opt out of refresh handling cleanly.
-    """
+def _issue_session(
+    response: Response, user: User, *, session: SessionDep, request: Request,
+) -> str:
+    """Mint an access token + refresh token and set both cookies. Returns
+    the access token string for callers that still want it in the JSON body
+    (CLI/e2e clients keep using bearer auth)."""
     token = make_token(user.id, token_version=user.token_version)
     set_access_cookie(response, token, access_token_max_age_seconds())
+    issue_refresh(session, response, user, request)
     return token
 
 
@@ -61,7 +65,7 @@ def providers() -> ProvidersOut:
 
 
 @router.post("/signup", response_model=TokenOut, dependencies=[Depends(hit_signup_ip)])
-def signup(body: SignupIn, session: SessionDep, response: Response) -> TokenOut:
+def signup(body: SignupIn, session: SessionDep, request: Request, response: Response) -> TokenOut:
     if not settings.allow_signup:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "signup is disabled on this deployment")
     # Block signups while no admin exists — otherwise we'd accumulate orphan
@@ -85,35 +89,40 @@ def signup(body: SignupIn, session: SessionDep, response: Response) -> TokenOut:
     session.add(user)
     session.commit()
     session.refresh(user)
-    return TokenOut(access_token=_issue_session(response, user))
+    tok = _issue_session(response, user, session=session, request=request)
+    session.commit()
+    return TokenOut(access_token=tok)
 
 
 @router.post("/login", response_model=TokenOut, dependencies=[Depends(hit_login_ip)])
 def login(body: LoginIn, session: SessionDep, request: Request, response: Response) -> TokenOut:
     email = normalize_email(body.email)
-    # Per-email throttle: counts only failed attempts (reset on success below)
-    # so an attacker spamming wrong passwords cannot lock out the real user
-    # because *they* trip 429 first; a real user with the correct password
-    # still succeeds and clears the counter.
     user = session.exec(select(User).where(User.email == email)).first()
     if not user or not verify_password(body.password, user.password_hash):
-        # Record this failure against the email; if it pushes them over the
-        # per-email cap, this raises 429 instead of 401 — by design.
         try:
             hit_login_email(email)
         except HTTPException:
             raise
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
-    # Successful login → clear the per-email failure counter.
     reset_login_email(email)
-    return TokenOut(access_token=_issue_session(response, user))
+    tok = _issue_session(response, user, session=session, request=request)
+    session.commit()
+    return TokenOut(access_token=tok)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(response: Response) -> Response:
-    """Clear browser cookies. Refresh-token row revocation (when present) is
-    handled in routes/refresh.py — calling that path is preferred for browsers,
-    but this endpoint stays available as a no-side-effect cookie wipe."""
+def logout(request: Request, response: Response, session: SessionDep) -> Response:
+    """Clear browser cookies AND revoke the current refresh-token family so
+    a stolen-cookie replay after logout fails immediately."""
+    raw = request.cookies.get(REFRESH_COOKIE)
+    if raw:
+        h = hmac_refresh_token(raw)
+        row = session.exec(
+            select(UserRefreshToken).where(UserRefreshToken.token_hash == h),
+        ).first()
+        if row is not None:
+            revoke_family(session, row.family_id, "logout")
+            session.commit()
     clear_access_cookie(response)
     clear_refresh_cookie(response)
     response.status_code = status.HTTP_204_NO_CONTENT

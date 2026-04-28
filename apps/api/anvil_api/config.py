@@ -131,6 +131,58 @@ class Settings(BaseSettings):
             "RATE_LIMIT_OAUTH_CALLBACK_PER_MIN", "rate_limit_oauth_callback_per_min"
         ),
     )
+    rate_limit_password_reset_ip_per_hour: int = Field(
+        default=10,
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_PASSWORD_RESET_IP_PER_HOUR",
+            "rate_limit_password_reset_ip_per_hour",
+        ),
+    )
+    rate_limit_password_reset_email_per_hour: int = Field(
+        default=5,
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_PASSWORD_RESET_EMAIL_PER_HOUR",
+            "rate_limit_password_reset_email_per_hour",
+        ),
+    )
+
+    # Email backend: "log" (writes the message to stdout — dev default) or
+    # "smtp" (production). SMTP knobs are read from EMAIL_SMTP_* env vars at
+    # send time so dev/CI doesn't need an SMTP server reachable.
+    email_backend: str = Field(
+        default="log",
+        validation_alias=AliasChoices("EMAIL_BACKEND", "email_backend"),
+    )
+    email_from: str = Field(
+        default="no-reply@anvil.local",
+        validation_alias=AliasChoices("EMAIL_FROM", "email_from"),
+    )
+    email_smtp_host: str = Field(
+        default="",
+        validation_alias=AliasChoices("EMAIL_SMTP_HOST", "email_smtp_host"),
+    )
+    email_smtp_port: int = Field(
+        default=587,
+        validation_alias=AliasChoices("EMAIL_SMTP_PORT", "email_smtp_port"),
+    )
+    email_smtp_user: str = Field(
+        default="",
+        validation_alias=AliasChoices("EMAIL_SMTP_USER", "email_smtp_user"),
+    )
+    email_smtp_password: str = Field(
+        default="",
+        validation_alias=AliasChoices("EMAIL_SMTP_PASSWORD", "email_smtp_password"),
+    )
+    email_smtp_starttls: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("EMAIL_SMTP_STARTTLS", "email_smtp_starttls"),
+    )
+    password_reset_ttl_minutes: int = Field(
+        default=30,
+        validation_alias=AliasChoices(
+            "PASSWORD_RESET_TTL_MINUTES", "password_reset_ttl_minutes"
+        ),
+    )
 
     # If true, trust X-Forwarded-For (leftmost) for client IP. Off by default
     # so attackers can't spoof their IP to bypass rate limits.

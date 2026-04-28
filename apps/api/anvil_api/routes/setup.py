@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
 from sqlmodel import select
@@ -88,7 +88,7 @@ def status_(session: SessionDep) -> SetupStatusOut:
     response_model=TokenOut,
     dependencies=[Depends(hit_signup_ip)],
 )
-def initialize(body: SetupInitIn, session: SessionDep, response: Response) -> TokenOut:
+def initialize(body: SetupInitIn, session: SessionDep, request: Request, response: Response) -> TokenOut:
     # Serialize concurrent installers (Postgres only — SQLite would silently
     # no-op the lock; we are Postgres-only per project decision).
     try:
@@ -135,4 +135,7 @@ def initialize(body: SetupInitIn, session: SessionDep, response: Response) -> To
     log.info("setup wizard: created admin %s", new_admin.email)
     token = make_token(new_admin.id, token_version=new_admin.token_version)
     set_access_cookie(response, token, access_token_max_age_seconds())
+    from anvil_api.routes.refresh import issue_refresh
+    issue_refresh(session, response, new_admin, request)
+    session.commit()
     return TokenOut(access_token=token)

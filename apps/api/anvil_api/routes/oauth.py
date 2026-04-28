@@ -331,5 +331,9 @@ async def oauth_callback(
     token = make_token(user_id, token_version=tv)
     resp = _success_redirect()
     set_access_cookie(resp, token, access_token_max_age_seconds())
+    if user_obj is not None:
+        from anvil_api.routes.refresh import issue_refresh
+        issue_refresh(session, resp, user_obj, request)
+        session.commit()
     resp.delete_cookie(NONCE_COOKIE, path="/")
     return resp

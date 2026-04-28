@@ -23,6 +23,35 @@ try { localStorage.removeItem("anvil_token"); } catch { /* noop */ }
 
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// Single-flight refresh dedupe: when many in-flight calls 401 at once, we
+// only want one /api/auth/refresh round-trip; everyone else awaits its
+// outcome and retries their original request once.
+let refreshInFlight: Promise<boolean> | null = null;
+async function attemptRefresh(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const r = await fetch(`${API}/api/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "X-Anvil-CSRF": "1" },
+        });
+        return r.ok;
+      } catch {
+        return false;
+      } finally {
+        // Clear next tick so subsequent unrelated 401s can retry independently.
+        setTimeout(() => { refreshInFlight = null; }, 0);
+      }
+    })();
+  }
+  return refreshInFlight;
+}
+
+async function rawFetch(path: string, init: RequestInit, headers: Record<string, string>) {
+  return fetch(`${API}${path}`, { ...init, headers, credentials: "include" });
+}
+
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     ...(init.body && !(init.body instanceof FormData)
@@ -32,7 +61,14 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   };
   const method = (init.method ?? "GET").toUpperCase();
   if (UNSAFE.has(method)) headers["X-Anvil-CSRF"] = "1";
-  const r = await fetch(`${API}${path}`, { ...init, headers, credentials: "include" });
+
+  let r = await rawFetch(path, init, headers);
+  // Try one silent refresh on 401 for non-auth endpoints; if refresh works,
+  // replay the original request once. Auth endpoints handle their own flow.
+  if (r.status === 401 && !path.startsWith("/api/auth/")) {
+    const ok = await attemptRefresh();
+    if (ok) r = await rawFetch(path, init, headers);
+  }
   if (r.status === 401) {
     if (location.pathname !== "/login" && !path.startsWith("/api/auth/")) {
       location.href = "/login";

@@ -92,6 +92,30 @@ def access_token_max_age_seconds() -> int:
     return int(settings.jwt_expires_minutes) * 60
 
 
+def refresh_token_max_age_seconds() -> int:
+    return int(settings.refresh_expires_days) * 86400
+
+
+def hmac_refresh_token(raw: str) -> str:
+    """HMAC-SHA256(JWT_SECRET, raw) → hex digest. Used as the storage key for
+    refresh tokens so a database leak alone can't be used to mint sessions."""
+    import hashlib
+    import hmac
+
+    return hmac.new(
+        settings.jwt_secret.encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def hmac_reset_token(raw: str) -> str:
+    """Same construction as :func:`hmac_refresh_token` but used for password
+    reset tokens; kept as a separate function for grep-ability and so future
+    rotations can diverge if needed."""
+    return hmac_refresh_token(raw)
+
+
 def get_current_user(
     request: Request,
     header_token: Annotated[str | None, Depends(oauth2_scheme)],

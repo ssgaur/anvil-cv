@@ -128,6 +128,12 @@ signup_ip = RateLimiter(
 oauth_callback_ip = RateLimiter(
     "oauth_callback_ip", settings.rate_limit_oauth_callback_per_min, 60.0,
 )
+password_reset_ip = RateLimiter(
+    "password_reset_ip", settings.rate_limit_password_reset_ip_per_hour, 3600.0,
+)
+password_reset_email = RateLimiter(
+    "password_reset_email", settings.rate_limit_password_reset_email_per_hour, 3600.0,
+)
 
 
 # --- Convenience helpers used by routes ---
@@ -149,3 +155,11 @@ def hit_signup_ip(request: Request) -> None:
 
 def hit_oauth_callback_ip(request: Request) -> None:
     oauth_callback_ip.check(client_ip(request))
+
+
+def hit_password_reset_ip(request: Request) -> None:
+    password_reset_ip.check(client_ip(request))
+
+
+def hit_password_reset_email(email: str) -> None:
+    password_reset_email.check(_hash_email(email))

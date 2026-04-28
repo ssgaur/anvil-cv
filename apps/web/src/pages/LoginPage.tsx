@@ -133,6 +133,15 @@ export function LoginPage() {
           {busy ? "..." : mode === "login" ? "Sign in" : "Create account"}
         </button>
 
+        {mode === "login" && providers?.password && (
+          <a
+            href="/forgot"
+            className="block text-[11px] text-neutral-400 hover:text-neutral-200 text-center"
+          >
+            Forgot password?
+          </a>
+        )}
+
         {!signupAllowed && (
           <p className="text-[11px] text-neutral-600 text-center">
             New accounts are disabled on this deployment.

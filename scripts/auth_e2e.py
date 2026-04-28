@@ -208,6 +208,55 @@ def main() -> int:
         assert "anvil_oauth_nonce" in r.headers.get("set-cookie", "")
         print(f"  {prov} ok → {loc[:60]}...")
 
+    # --- Cookie session + refresh + password-reset (uses a fresh client) ---
+    print("\n[C1] cookie session: signup, /me via cookie, refresh rotation")
+    with httpx.Client(base_url=API, timeout=10.0) as cc:
+        cemail = f"e2e-cookie-{uuid.uuid4().hex[:8]}@example.com"
+        r = cc.post(
+            "/api/auth/signup",
+            json={"email": cemail, "name": "C", "password": "supers3cret"},
+            headers={"X-Anvil-CSRF": "1"},
+        )
+        if r.status_code == 429:
+            print("  skip cookie tests: signup_ip rate-limit hit")
+        else:
+            assert r.status_code == 200, r.status_code
+            # cookies should be on the client now
+            jar = {c.name for c in cc.cookies.jar}
+            assert "anvil_access" in jar and "anvil_refresh" in jar, jar
+            r = cc.get("/api/auth/me"); assert r.status_code == 200, r.status_code
+            assert r.json()["email"] == cemail
+            print("  /me via cookie ok")
+
+            r = cc.post(
+                "/api/auth/refresh",
+                headers={"X-Anvil-CSRF": "1", "Origin": "http://localhost:5173"},
+            )
+            assert r.status_code == 200, r.status_code
+            print("  refresh rotation ok")
+
+            print("\n[C2] password-reset request returns 204 (no enumeration)")
+            r = cc.post(
+                "/api/auth/password-reset/request",
+                json={"email": cemail},
+            )
+            assert r.status_code == 204, r.status_code
+            r = cc.post(
+                "/api/auth/password-reset/request",
+                json={"email": "nonexistent-user-zzz@example.com"},
+            )
+            assert r.status_code == 204, r.status_code
+            print("  204 for both real and unknown email")
+
+            print("\n[C3] CSRF: cookie + unsafe verb without CSRF header → 403")
+            r = cc.post(
+                "/api/projects",
+                json={"name": "csrf-attempt"},
+                headers={"Origin": "http://localhost:5173"},
+            )
+            assert r.status_code == 403, r.status_code
+            print("  ok")
+
     print("\nALL OK")
     return 0
 

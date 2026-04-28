@@ -8,9 +8,11 @@ import { Toaster } from "./components/Toaster";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { DatasetDetailPage } from "./pages/DatasetDetailPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { SetupPage } from "./pages/SetupPage";
 import { WorkviewPage } from "./pages/WorkviewPage";
 import "./index.css";
@@ -23,6 +25,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route element={<SetupGuard />}>
           <Route path="/setup" element={<SetupPage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/forgot" element={<ForgotPasswordPage />} />
+          <Route path="/reset" element={<ResetPasswordPage />} />
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
           {/* Workview is full-screen, no shell */}

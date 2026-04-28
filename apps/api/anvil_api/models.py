@@ -127,6 +127,50 @@ class UserOAuthIdentity(SQLModel, table=True):
     user: User = Relationship(back_populates="oauth_identities")
 
 
+class UserRefreshToken(SQLModel, table=True):
+    """Rotating refresh-token chain for cookie sessions.
+
+    Storage stores only an HMAC-SHA256 of the raw token (keyed by JWT_SECRET).
+    Rotation: each refresh issues a new row whose `parent_id` is the row that
+    was just consumed; the consumed row's `used_at` is set atomically. Any
+    second use of an already-used token revokes the entire `family_id`
+    (chain), which is the standard refresh-token-reuse-detection pattern.
+    A small grace window (`refresh_reuse_grace_seconds`) tolerates benign
+    multi-tab races without flagging them as theft.
+    """
+
+    __tablename__ = "user_refresh_tokens"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+    family_id: UUID = Field(index=True)
+    parent_id: UUID | None = Field(default=None, index=True)
+    token_hash: str = Field(max_length=128, index=True, unique=True)
+    user_agent: str | None = Field(default=None, max_length=255)
+    ip: str | None = Field(default=None, max_length=64)
+    created_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime
+    used_at: datetime | None = Field(default=None)
+    revoked_at: datetime | None = Field(default=None)
+    revoked_reason: str | None = Field(default=None, max_length=64)
+
+
+class PasswordResetToken(SQLModel, table=True):
+    """Single-use password-reset token. Storage holds an HMAC-SHA256 of the
+    raw token (keyed by JWT_SECRET). The raw token is delivered to the user
+    via email and presented back to /password-reset/confirm exactly once."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+    token_hash: str = Field(max_length=128, index=True, unique=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime
+    used_at: datetime | None = Field(default=None)
+    ip: str | None = Field(default=None, max_length=64)
+
+
 class InstanceState(SQLModel, table=True):
     """Singleton-style key/value table for instance-wide flags (e.g. setup
     completion marker). Avoids a dedicated migration for every new flag."""
