@@ -1,32 +1,86 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { api, downloadCocoExport, fileUrl } from "../lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { api, downloadCocoExport, fileUrl, type ImageListOpts, type ImageSort } from "../lib/api";
 import { toast } from "../lib/toast";
-import type { Dataset, ImageRow, ReviewStatus } from "../types";
+import type { ClassRow, Dataset, ImageRow, ReviewStatus } from "../types";
+
+const SORT_LABELS: Record<ImageSort, string> = {
+  oldest: "Oldest first",
+  recent: "Newest first",
+  filename: "Filename A→Z",
+  most_labels: "Most labels",
+  fewest_labels: "Fewest labels",
+  uncertainty: "Highest uncertainty",
+};
 
 export function DatasetDetailPage() {
   const { projectId = "", datasetId = "" } = useParams();
+  const [search, setSearch] = useSearchParams();
+
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [images, setImages] = useState<ImageRow[]>([]);
+  const [allDatasets, setAllDatasets] = useState<Dataset[]>([]);
+  const [classes, setClasses] = useState<ClassRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const cocoInput = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [filter, setFilter] = useState<"all" | "ready" | "uploaded" | "embedding" | "failed">("all");
-  const [reviewFilter, setReviewFilter] = useState<"all" | ReviewStatus>("all");
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  // Selection state for bulk ops (persists across pagination loadMore).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const lastSelectedRef = useRef<string | null>(null);
+
   const PAGE = 200;
 
+  // URL-derived filter state. Centralized so back/forward and shared links
+  // restore the exact view.
+  const reviewFilter = (search.get("review") ?? "all") as "all" | ReviewStatus;
+  const hasAnnotations = search.get("has") === "yes" ? true : search.get("has") === "no" ? false : undefined;
+  const classFilter = useMemo(() => search.getAll("class").filter(Boolean), [search]);
+  const sort: ImageSort = (search.get("sort") as ImageSort) ?? "oldest";
+
+  const setParam = useCallback((key: string, val: string | null) => {
+    setSearch((sp) => {
+      const next = new URLSearchParams(sp);
+      if (val == null || val === "") next.delete(key);
+      else next.set(key, val);
+      return next;
+    }, { replace: true });
+  }, [setSearch]);
+
+  const toggleClassFilter = useCallback((cid: string) => {
+    setSearch((sp) => {
+      const next = new URLSearchParams(sp);
+      const cur = new Set(next.getAll("class"));
+      if (cur.has(cid)) cur.delete(cid);
+      else cur.add(cid);
+      next.delete("class");
+      cur.forEach((c) => next.append("class", c));
+      return next;
+    }, { replace: true });
+  }, [setSearch]);
+
+  const buildOpts = useCallback((): ImageListOpts => ({
+    review_status: reviewFilter !== "all" ? reviewFilter : undefined,
+    has_annotations: hasAnnotations,
+    class_id: classFilter.length ? classFilter : undefined,
+    sort,
+  }), [reviewFilter, hasAnnotations, classFilter, sort]);
+
   const reload = useCallback(async () => {
-    const [d, paged] = await Promise.all([
+    const [d, paged, cls, ds] = await Promise.all([
       api.getDataset(projectId, datasetId),
-      api.listImagesPaged(projectId, datasetId, { limit: PAGE, offset: 0 }),
+      api.listImagesPaged(projectId, datasetId, { ...buildOpts(), limit: PAGE, offset: 0 }),
+      api.listClasses(projectId).catch(() => [] as ClassRow[]),
+      api.listDatasets(projectId).catch(() => [] as Dataset[]),
     ]);
     setDataset(d); setImages(paged.items); setTotal(paged.total);
-  }, [projectId, datasetId]);
+    setClasses(cls); setAllDatasets(ds);
+  }, [projectId, datasetId, buildOpts]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -34,7 +88,7 @@ export function DatasetDetailPage() {
     if (loadingMore || images.length >= total) return;
     setLoadingMore(true);
     try {
-      const paged = await api.listImagesPaged(projectId, datasetId, { limit: PAGE, offset: images.length });
+      const paged = await api.listImagesPaged(projectId, datasetId, { ...buildOpts(), limit: PAGE, offset: images.length });
       setImages((prev) => [...prev, ...paged.items]);
       setTotal(paged.total);
     } finally {
@@ -42,13 +96,24 @@ export function DatasetDetailPage() {
     }
   }
 
-  // Auto-poll while embeddings are in progress
   useEffect(() => {
     const pending = images.some((i) => i.status === "uploaded" || i.status === "embedding");
     if (!pending) return;
     const t = setInterval(reload, 1500);
     return () => clearInterval(t);
   }, [images, reload]);
+
+  useEffect(() => {
+    function k(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && /^(input|textarea|select)$/i.test(t.tagName)) return;
+      if (e.key === "Escape" && selected.size > 0) {
+        setSelected(new Set());
+      }
+    }
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [selected.size]);
 
   async function upload(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -93,23 +158,115 @@ export function DatasetDetailPage() {
     upload(files);
   }
 
-  const filtered = images
-    .filter((i) => filter === "all" || i.status === filter)
-    .filter((i) => reviewFilter === "all" || i.review_status === reviewFilter);
   const counts = {
     all: images.length,
     ready: images.filter((i) => i.status === "ready").length,
     embedding: images.filter((i) => i.status === "embedding" || i.status === "uploaded").length,
     failed: images.filter((i) => i.status === "failed").length,
   };
-  const reviewCounts: Record<"all" | ReviewStatus, number> = {
-    all: images.length,
-    new: images.filter((i) => i.review_status === "new").length,
-    in_progress: images.filter((i) => i.review_status === "in_progress").length,
-    submitted: images.filter((i) => i.review_status === "submitted").length,
-    approved: images.filter((i) => i.review_status === "approved").length,
-    rejected: images.filter((i) => i.review_status === "rejected").length,
-  };
+  const filtered = images.filter((i) => filter === "all" || i.status === filter);
+  const visibleIds = filtered.map((i) => i.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  function toggleOne(id: string, ev?: React.MouseEvent) {
+    if (ev?.shiftKey && lastSelectedRef.current) {
+      const a = visibleIds.indexOf(lastSelectedRef.current);
+      const b = visibleIds.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        const range = visibleIds.slice(lo, hi + 1);
+        setSelected((prev) => {
+          const next = new Set(prev);
+          range.forEach((rid) => next.add(rid));
+          return next;
+        });
+        lastSelectedRef.current = id;
+        return;
+      }
+    }
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    lastSelectedRef.current = id;
+  }
+
+  async function bulkDelete() {
+    if (selected.size === 0) return;
+    if (!confirm(`Delete ${selected.size} image(s)? This cannot be undone.`)) return;
+    try {
+      const r = await api.bulkDeleteImages(projectId, datasetId, [...selected]);
+      const okN = r.ok.length;
+      if (r.failed.length > 0) {
+        toast.warn(`Deleted ${okN} of ${selected.size}`, `${r.failed.length} failed (e.g. ${r.failed[0].reason})`);
+      } else {
+        toast.success(`Deleted ${okN} image(s)`);
+      }
+      setSelected(new Set());
+      await reload();
+    } catch (e) { toast.error(e, "Bulk delete failed"); }
+  }
+
+  async function bulkReview(action: "reset" | "reopen" | "reject") {
+    if (selected.size === 0) return;
+    let reason: string | undefined;
+    if (action === "reject") {
+      const r = prompt("Rejection reason (required):");
+      if (!r || !r.trim()) return;
+      reason = r.trim();
+    }
+    try {
+      const r = await api.bulkReviewImages(projectId, datasetId, {
+        image_ids: [...selected], action, reason,
+      });
+      const okN = r.ok.length;
+      if (r.failed.length > 0) {
+        toast.warn(`${action}: ${okN} of ${selected.size}`, `${r.failed.length} failed (e.g. ${r.failed[0].reason})`);
+      } else {
+        toast.success(`${action}: ${okN} image(s)`);
+      }
+      setSelected(new Set());
+      await reload();
+    } catch (e) { toast.error(e, `Bulk ${action} failed`); }
+  }
+
+  async function bulkMove(targetDatasetId: string) {
+    if (selected.size === 0 || !targetDatasetId) return;
+    try {
+      const r = await api.bulkMoveImages(projectId, datasetId, {
+        image_ids: [...selected], target_dataset_id: targetDatasetId,
+      });
+      const okN = r.ok.length;
+      if (r.failed.length > 0) {
+        toast.warn(`Moved ${okN} of ${selected.size}`, `${r.failed.length} failed (e.g. ${r.failed[0].reason})`);
+      } else {
+        toast.success(`Moved ${okN} image(s)`);
+      }
+      setSelected(new Set());
+      await reload();
+    } catch (e) { toast.error(e, "Bulk move failed"); }
+  }
+
+  async function bulkDeleteAnnotationsByClass(classId: string) {
+    if (selected.size === 0 || !classId) return;
+    const cls = classes.find((c) => c.id === classId);
+    if (!confirm(`Delete all "${cls?.name ?? classId}" annotations from ${selected.size} image(s)?`)) return;
+    try {
+      const r = await api.bulkDeleteAnnotationsByClass(projectId, datasetId, {
+        class_id: classId, image_ids: [...selected],
+      });
+      const okN = r.ok.length;
+      if (r.failed.length > 0) {
+        toast.warn(`Cleared on ${okN} of ${selected.size}`, `${r.failed.length} failed/skipped`);
+      } else {
+        toast.success(`Cleared "${cls?.name ?? classId}" on ${okN} image(s)`);
+      }
+      setSelected(new Set());
+      await reload();
+    } catch (e) { toast.error(e, "Bulk class delete failed"); }
+  }
 
   if (!dataset) return <div className="p-8 text-neutral-500">loading…</div>;
 
@@ -191,7 +348,7 @@ export function DatasetDetailPage() {
           </div>
         </div>
 
-        <div className="mt-4 flex gap-1">
+        <div className="mt-4 flex gap-1 flex-wrap items-center">
           {(["all", "ready", "embedding", "failed"] as const).map((f) => (
             <button
               key={f}
@@ -203,9 +360,30 @@ export function DatasetDetailPage() {
               {f} <span className="ml-1 text-neutral-500">{counts[f as keyof typeof counts] ?? counts.all}</span>
             </button>
           ))}
+          <span className="mx-2 h-4 w-px bg-neutral-800" />
+          <select
+            value={sort}
+            onChange={(e) => setParam("sort", e.target.value === "oldest" ? null : e.target.value)}
+            className="bg-neutral-900 border border-neutral-800 text-neutral-200 text-xs rounded px-2 py-1"
+            title="Sort order (server-side)"
+          >
+            {(Object.keys(SORT_LABELS) as ImageSort[]).map((s) => (
+              <option key={s} value={s}>{SORT_LABELS[s]}</option>
+            ))}
+          </select>
+          <select
+            value={search.get("has") ?? ""}
+            onChange={(e) => setParam("has", e.target.value || null)}
+            className="bg-neutral-900 border border-neutral-800 text-neutral-200 text-xs rounded px-2 py-1"
+            title="Has annotations filter (server-side)"
+          >
+            <option value="">all (annotated + unannotated)</option>
+            <option value="yes">has annotations</option>
+            <option value="no">no annotations</option>
+          </select>
         </div>
 
-        <div className="mt-2 flex gap-1 items-center">
+        <div className="mt-2 flex gap-1 items-center flex-wrap">
           <span className="text-[10px] uppercase tracking-wider text-neutral-600 mr-1">Review</span>
           {(["all", "new", "in_progress", "submitted", "approved", "rejected"] as const).map((f) => {
             const labels: Record<typeof f, string> = {
@@ -220,29 +398,127 @@ export function DatasetDetailPage() {
             return (
               <button
                 key={f}
-                onClick={() => setReviewFilter(f)}
+                onClick={() => setParam("review", f === "all" ? null : f)}
                 className={`px-3 py-1 text-xs rounded ${
                   active ? `bg-neutral-700 text-neutral-100 ring-1 ${ringColor}` : "bg-neutral-900 text-neutral-400 hover:text-neutral-200"
                 }`}
               >
-                {labels[f]} <span className="ml-1 text-neutral-500">{reviewCounts[f]}</span>
+                {labels[f]}
               </button>
             );
           })}
         </div>
+
+        {classes.length > 0 && (
+          <div className="mt-2 flex gap-1 items-center flex-wrap">
+            <span className="text-[10px] uppercase tracking-wider text-neutral-600 mr-1">Classes</span>
+            {classes.slice(0, 24).map((c) => {
+              const active = classFilter.includes(c.id);
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => toggleClassFilter(c.id)}
+                  className={`px-2 py-0.5 text-[11px] rounded border ${
+                    active ? "border-emerald-500 text-neutral-100" : "border-neutral-800 text-neutral-400 hover:border-neutral-600"
+                  }`}
+                  style={active ? { boxShadow: `inset 0 0 0 9999px ${c.color}22` } : undefined}
+                >
+                  <span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ background: c.color }} />
+                  {c.name}
+                </button>
+              );
+            })}
+            {classFilter.length > 0 && (
+              <button
+                onClick={() => setSearch((sp) => { const n = new URLSearchParams(sp); n.delete("class"); return n; }, { replace: true })}
+                className="text-[11px] text-neutral-500 hover:text-neutral-200 ml-1"
+              >
+                clear classes
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      {selected.size > 0 && (
+        <div className="sticky top-0 z-20 bg-neutral-950/95 backdrop-blur border-b border-emerald-500/40 px-8 py-2 flex items-center gap-3 flex-wrap">
+          <span className="text-sm text-emerald-400 font-medium">{selected.size} selected</span>
+          <button
+            onClick={() => {
+              setSelected((prev) => {
+                if (allVisibleSelected) {
+                  const next = new Set(prev);
+                  visibleIds.forEach((id) => next.delete(id));
+                  return next;
+                }
+                const next = new Set(prev);
+                visibleIds.forEach((id) => next.add(id));
+                return next;
+              });
+            }}
+            className="text-xs text-neutral-300 hover:text-white px-2 py-1 border border-neutral-700 rounded"
+          >
+            {allVisibleSelected ? "Deselect visible" : "Select all visible"}
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="text-xs text-neutral-400 hover:text-white"
+          >
+            Clear
+          </button>
+          <span className="mx-2 h-4 w-px bg-neutral-800" />
+          <button onClick={() => bulkReview("reset")} className="text-xs px-3 py-1 rounded bg-neutral-700 text-neutral-200 hover:bg-neutral-600 border border-neutral-600">Reset to new</button>
+          <button onClick={() => bulkReview("reopen")} className="text-xs px-3 py-1 rounded bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 border border-blue-500/40">Reopen</button>
+          <button onClick={() => bulkReview("reject")} className="text-xs px-3 py-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40">Reject…</button>
+          <span className="mx-2 h-4 w-px bg-neutral-800" />
+          <select
+            defaultValue=""
+            onChange={(e) => { const v = e.target.value; e.currentTarget.selectedIndex = 0; if (v) bulkMove(v); }}
+            className="text-xs bg-neutral-900 border border-neutral-700 text-neutral-200 rounded px-2 py-1"
+            title="Move selected to another dataset (approved images blocked)"
+          >
+            <option value="">Move to dataset…</option>
+            {allDatasets.filter((d) => d.id !== datasetId).map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+          {classes.length > 0 && (
+            <select
+              defaultValue=""
+              onChange={(e) => { const v = e.target.value; e.currentTarget.selectedIndex = 0; if (v) bulkDeleteAnnotationsByClass(v); }}
+              className="text-xs bg-neutral-900 border border-neutral-700 text-neutral-200 rounded px-2 py-1"
+              title="Delete all annotations of a given class on selected images (locked images skipped)"
+            >
+              <option value="">Clear class…</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          )}
+          <span className="mx-2 h-4 w-px bg-neutral-800" />
+          <button onClick={bulkDelete} className="text-xs px-3 py-1 rounded bg-rose-600 text-white hover:bg-rose-500">Delete images</button>
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <div className="p-16 text-center text-neutral-500 border-2 border-dashed border-neutral-800 m-8 rounded-lg">
-          {images.length === 0
+          {images.length === 0 && reviewFilter === "all" && hasAnnotations === undefined && classFilter.length === 0
             ? "Drop images here, or click Upload images above. We'll pre-compute SAM2 embeddings in the background — click-to-segment is instant once an image is Ready."
-            : `No images match filter "${filter}".`}
+            : `No images match the current filters.`}
         </div>
       ) : (
         <div className="p-8">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
             {filtered.map((img) => (
-              <ImageCard key={img.id} img={img} projectId={projectId} datasetId={datasetId} />
+              <ImageCard
+                key={img.id}
+                img={img}
+                projectId={projectId}
+                datasetId={datasetId}
+                selected={selected.has(img.id)}
+                anySelected={selected.size > 0}
+                onToggle={(ev) => toggleOne(img.id, ev)}
+              />
             ))}
           </div>
           {images.length < total && (
@@ -267,7 +543,13 @@ export function DatasetDetailPage() {
   );
 }
 
-function ImageCard({ img, projectId, datasetId }: { img: ImageRow; projectId: string; datasetId: string }) {
+function ImageCard({
+  img, projectId, datasetId, selected, anySelected, onToggle,
+}: {
+  img: ImageRow; projectId: string; datasetId: string;
+  selected: boolean; anySelected: boolean;
+  onToggle: (ev: React.MouseEvent) => void;
+}) {
   const statusColor = {
     uploaded: "bg-amber-500",
     embedding: "bg-amber-500 animate-pulse",
@@ -283,11 +565,29 @@ function ImageCard({ img, projectId, datasetId }: { img: ImageRow; projectId: st
     rejected: "bg-rose-400",
   };
 
+  // When ANY image is selected, clicking a card toggles selection rather than
+  // navigating to the workview — gives a fluid bulk-edit feel.
+  const handleCardClick = (e: React.MouseEvent) => {
+    if (anySelected) {
+      e.preventDefault();
+      onToggle(e);
+    }
+  };
+
   return (
     <Link
       to={`/projects/${projectId}/datasets/${datasetId}/workview/${img.id}`}
-      className="block bg-neutral-900 border border-neutral-800 hover:border-emerald-500 rounded overflow-hidden group"
+      onClick={handleCardClick}
+      className={`block bg-neutral-900 border ${selected ? "border-emerald-500 ring-1 ring-emerald-500" : "border-neutral-800 hover:border-emerald-500"} rounded overflow-hidden group relative`}
     >
+      <button
+        type="button"
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle(e); }}
+        className={`absolute top-2 right-7 z-10 w-4 h-4 rounded border ${selected ? "bg-emerald-500 border-emerald-400 text-neutral-950" : "bg-neutral-950/70 border-neutral-600 text-transparent hover:text-neutral-300 opacity-0 group-hover:opacity-100"} flex items-center justify-center text-[10px] font-bold ${selected ? "opacity-100" : ""}`}
+        title="Select for bulk action (shift-click for range)"
+      >
+        ✓
+      </button>
       <div className="relative aspect-square bg-neutral-950 overflow-hidden">
         {img.thumbnail_url ? (
           <img src={fileUrl(img.thumbnail_url)} alt={img.filename}

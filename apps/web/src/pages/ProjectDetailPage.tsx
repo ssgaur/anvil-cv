@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
-import type { ClassProperty, ClassPropertyType, ClassRow, CompareResult, Dataset, ModelVersion, Project } from "../types";
+import type { ClassProperty, ClassPropertyType, ClassRow, CompareResult, Dataset, KeypointSchema, ModelVersion, Project } from "../types";
 
 const TABS = ["Data", "Classes", "Models", "Settings"] as const;
 type Tab = (typeof TABS)[number];
@@ -139,6 +139,8 @@ const PALETTE = [
 function ClassesTab({ projectId, classes, onReload }: { projectId: string; classes: ClassRow[]; onReload: () => void }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(PALETTE[5]);  // default green
+  const [geometry, setGeometry] = useState<string>("polygon");
+  const [parentId, setParentId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -146,13 +148,50 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
     e.preventDefault();
     if (!name.trim()) return;
     setBusy(true);
-    try { await api.createClass(projectId, { name: name.trim(), color }); setName(""); onReload(); }
-    finally { setBusy(false); }
+    try {
+      const body: Parameters<typeof api.createClass>[1] = {
+        name: name.trim(), color, geometry_type: geometry,
+      };
+      if (parentId) body.parent_id = parentId;
+      if (geometry === "keypoints") {
+        // Backend requires a keypoint_schema for keypoints classes.
+        // Seed a minimal 1-point schema; user edits in expanded card.
+        body.keypoint_schema = { keypoints: [{ name: "kp1" }], edges: [] };
+      }
+      await api.createClass(projectId, body);
+      setName(""); setParentId("");
+      onReload();
+    } catch (err) {
+      toast.error(err, "Create class failed");
+    } finally { setBusy(false); }
   }
 
   async function del(c: ClassRow) {
     if (!confirm(`Delete class "${c.name}"? Existing annotations will be removed.`)) return;
-    await api.deleteClass(projectId, c.id); onReload();
+    try { await api.deleteClass(projectId, c.id); onReload(); }
+    catch (err) { toast.error(err, "Delete failed"); }
+  }
+
+  // Build hierarchical render order: roots first, then children indented.
+  const byParent = new Map<string | null, ClassRow[]>();
+  classes.forEach((c) => {
+    const k = c.parent_id ?? null;
+    if (!byParent.has(k)) byParent.set(k, []);
+    byParent.get(k)!.push(c);
+  });
+  const ordered: { cls: ClassRow; depth: number }[] = [];
+  function walk(parent: string | null, depth: number) {
+    const kids = (byParent.get(parent) ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    for (const k of kids) {
+      ordered.push({ cls: k, depth });
+      walk(k.id, depth + 1);
+    }
+  }
+  walk(null, 0);
+  // Any classes not reached (shouldn't happen, but safe) — append at root.
+  if (ordered.length < classes.length) {
+    const seen = new Set(ordered.map((o) => o.cls.id));
+    classes.filter((c) => !seen.has(c.id)).forEach((c) => ordered.push({ cls: c, depth: 0 }));
   }
 
   return (
@@ -163,6 +202,31 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
           placeholder="Class name (e.g. cucumber, sunkenArea)"
           value={name} onChange={(e) => setName(e.target.value)}
         />
+        <select
+          value={geometry}
+          onChange={(e) => setGeometry(e.target.value)}
+          className="bg-neutral-900 border border-neutral-800 text-neutral-200 text-sm rounded px-2 py-2"
+          title="Geometry type for this class"
+        >
+          <option value="polygon">polygon</option>
+          <option value="bbox">bbox</option>
+          <option value="mask">mask</option>
+          <option value="polyline">polyline</option>
+          <option value="obb">rotated bbox</option>
+          <option value="keypoints">keypoints</option>
+          <option value="point">point</option>
+        </select>
+        <select
+          value={parentId}
+          onChange={(e) => setParentId(e.target.value)}
+          className="bg-neutral-900 border border-neutral-800 text-neutral-200 text-sm rounded px-2 py-2"
+          title="Optional parent class (hierarchy)"
+        >
+          <option value="">— root —</option>
+          {classes.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
         <PaletteRow color={color} onPick={setColor} />
         <button disabled={busy || !name.trim()} className="bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 px-4 py-2 rounded text-sm font-medium">
           Add class
@@ -173,16 +237,18 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
         <div className="text-neutral-500 text-sm">No classes yet. Add one before annotating.</div>
       ) : (
         <ul className="space-y-2">
-          {classes.map((c) => (
-            <ClassCard
-              key={c.id}
-              projectId={projectId}
-              cls={c}
-              expanded={editingId === c.id}
-              onExpand={() => setEditingId(editingId === c.id ? null : c.id)}
-              onDelete={() => del(c)}
-              onChanged={onReload}
-            />
+          {ordered.map(({ cls: c, depth }) => (
+            <div key={c.id} style={{ marginLeft: depth * 18 }}>
+              <ClassCard
+                projectId={projectId}
+                cls={c}
+                allClasses={classes}
+                expanded={editingId === c.id}
+                onExpand={() => setEditingId(editingId === c.id ? null : c.id)}
+                onDelete={() => del(c)}
+                onChanged={onReload}
+              />
+            </div>
           ))}
         </ul>
       )}
@@ -207,18 +273,40 @@ function PaletteRow({ color, onPick }: { color: string; onPick: (c: string) => v
 }
 
 function ClassCard({
-  projectId, cls, expanded, onExpand, onDelete, onChanged,
+  projectId, cls, allClasses, expanded, onExpand, onDelete, onChanged,
 }: {
-  projectId: string; cls: ClassRow; expanded: boolean;
+  projectId: string; cls: ClassRow; allClasses: ClassRow[]; expanded: boolean;
   onExpand: () => void; onDelete: () => void; onChanged: () => void;
 }) {
   const [name, setName] = useState(cls.name);
   const [color, setColor] = useState(cls.color);
   const [description, setDescription] = useState(cls.description ?? "");
+  const [parentId, setParentId] = useState<string>(cls.parent_id ?? "");
   const [savingMeta, setSavingMeta] = useState(false);
   const [props, setProps] = useState<ClassProperty[] | null>(null);
   const [propsErr, setPropsErr] = useState<string | null>(null);
-  const dirty = name !== cls.name || color !== cls.color || description !== (cls.description ?? "");
+  const dirty = name !== cls.name || color !== cls.color
+    || description !== (cls.description ?? "")
+    || parentId !== (cls.parent_id ?? "");
+
+  // Disallow choosing self or any descendant as parent (would create a cycle).
+  const descendantIds = useMemo(() => {
+    const out = new Set<string>([cls.id]);
+    let frontier = [cls.id];
+    while (frontier.length) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const c of allClasses) {
+          if (c.parent_id === id && !out.has(c.id)) {
+            out.add(c.id);
+            next.push(c.id);
+          }
+        }
+      }
+      frontier = next;
+    }
+    return out;
+  }, [allClasses, cls.id]);
 
   useEffect(() => {
     if (!expanded || props !== null) return;
@@ -229,10 +317,18 @@ function ClassCard({
   async function saveMeta() {
     setSavingMeta(true);
     try {
-      await api.patchClass(projectId, cls.id, {
+      const body: Parameters<typeof api.patchClass>[2] = {
         name: name.trim() || cls.name, color, description,
-      });
+      };
+      const oldParent = cls.parent_id ?? "";
+      if (parentId !== oldParent) {
+        if (parentId === "") body.set_parent_root = true;
+        else body.parent_id = parentId;
+      }
+      await api.patchClass(projectId, cls.id, body);
       onChanged();
+    } catch (err) {
+      toast.error(err, "Save failed");
     } finally { setSavingMeta(false); }
   }
 
@@ -276,6 +372,30 @@ function ClassCard({
               placeholder="(optional) what counts / doesn't count for this class"
             />
           </div>
+          <div>
+            <label className="text-xs text-neutral-500 block mb-1">Parent class (hierarchy)</label>
+            <select
+              value={parentId}
+              onChange={(e) => setParentId(e.target.value)}
+              className="w-full bg-neutral-900 border border-neutral-800 text-neutral-200 text-sm rounded px-2 py-1.5"
+            >
+              <option value="">— root —</option>
+              {allClasses
+                .filter((c) => !descendantIds.has(c.id))
+                .map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+            </select>
+            <div className="text-[10px] text-neutral-600 mt-1">
+              Used in COCO export as supercategory and reflected as a path
+              (e.g. <code>animal/dog/labrador</code>) under <code>category.anvil.path</code>.
+            </div>
+          </div>
+          {cls.geometry_type === "keypoints" && (
+            <KeypointSchemaEditor
+              projectId={projectId} cls={cls} onChanged={onChanged}
+            />
+          )}
           <div className="flex gap-2">
             <button
               disabled={!dirty || savingMeta}
@@ -893,4 +1013,121 @@ function StatusBadge({ status }: { status: ModelVersion["status"] }) {
     failed: "bg-rose-500/20 text-rose-400",
   }[status];
   return <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded ${cls}`}>{status}</span>;
+}
+
+function KeypointSchemaEditor({
+  projectId, cls, onChanged,
+}: {
+  projectId: string; cls: ClassRow; onChanged: () => void;
+}) {
+  const initial = cls.keypoint_schema ?? { keypoints: [], edges: [] };
+  const [kps, setKps] = useState<{ name: string }[]>(initial.keypoints.map((k) => ({ name: k.name })));
+  const [skeletonText, setSkeletonText] = useState<string>(
+    (initial.edges ?? []).map(([a, b]) => `${a + 1},${b + 1}`).join(" ")
+  );
+  const [saving, setSaving] = useState(false);
+  // Once any annotation exists for this class, the schema is immutable
+  // (backend enforces 409). Show a friendly read-only state.
+  const locked = (cls.annotation_count ?? 0) > 0;
+
+  function move(i: number, delta: number) {
+    const j = i + delta;
+    if (j < 0 || j >= kps.length) return;
+    const next = kps.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    setKps(next);
+  }
+
+  async function save() {
+    if (kps.length < 1) { toast.warn("At least one keypoint is required."); return; }
+    if (kps.some((k) => !k.name.trim())) { toast.warn("All keypoint names must be non-empty."); return; }
+    const seen = new Set<string>();
+    for (const k of kps) {
+      if (seen.has(k.name)) { toast.warn(`Duplicate keypoint name: ${k.name}`); return; }
+      seen.add(k.name);
+    }
+    // Skeleton: comma-separated 1-based pairs, whitespace-separated edges.
+    const edges: [number, number][] = [];
+    for (const tok of skeletonText.trim().split(/\s+/).filter(Boolean)) {
+      const m = tok.match(/^(\d+),(\d+)$/);
+      if (!m) { toast.warn(`Bad edge "${tok}". Use 1-based pairs like "1,2".`); return; }
+      const a = parseInt(m[1], 10) - 1;
+      const b = parseInt(m[2], 10) - 1;
+      if (a < 0 || a >= kps.length || b < 0 || b >= kps.length || a === b) {
+        toast.warn(`Edge "${tok}" references invalid index.`);
+        return;
+      }
+      edges.push([a, b]);
+    }
+    const schema: KeypointSchema = {
+      keypoints: kps.map((k) => ({ name: k.name.trim() })),
+      edges,
+    };
+    setSaving(true);
+    try {
+      await api.patchClass(projectId, cls.id, { keypoint_schema: schema });
+      toast.success("Keypoint schema saved");
+      onChanged();
+    } catch (e) {
+      toast.error(e, "Schema save failed");
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="border-t border-neutral-800 pt-3">
+      <div className="text-xs uppercase tracking-wide text-neutral-500 mb-2">
+        Keypoint schema {locked && <span className="ml-2 text-amber-400">(locked — annotations exist)</span>}
+      </div>
+      <div className="space-y-1.5">
+        {kps.map((k, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <span className="text-[10px] text-neutral-500 w-5 text-right">{i + 1}.</span>
+            <input
+              disabled={locked}
+              value={k.name}
+              onChange={(e) => {
+                const next = kps.slice();
+                next[i] = { name: e.target.value };
+                setKps(next);
+              }}
+              className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-sm focus:border-emerald-500 outline-none disabled:opacity-60"
+              placeholder={`keypoint ${i + 1} name`}
+            />
+            <button type="button" disabled={locked} onClick={() => move(i, -1)} className="text-neutral-500 hover:text-white text-xs px-1 disabled:opacity-30">↑</button>
+            <button type="button" disabled={locked} onClick={() => move(i, +1)} className="text-neutral-500 hover:text-white text-xs px-1 disabled:opacity-30">↓</button>
+            <button type="button" disabled={locked} onClick={() => setKps(kps.filter((_, j) => j !== i))} className="text-rose-400 hover:text-rose-300 text-xs disabled:opacity-30">✕</button>
+          </div>
+        ))}
+        {!locked && (
+          <button
+            type="button"
+            onClick={() => setKps([...kps, { name: "" }])}
+            className="text-emerald-400 hover:text-emerald-300 text-xs"
+          >+ add keypoint</button>
+        )}
+      </div>
+      <div className="mt-3">
+        <label className="text-xs text-neutral-500 block mb-1">
+          Skeleton edges (1-based pairs, space-separated, e.g. <code>1,2 2,3</code>)
+        </label>
+        <input
+          disabled={locked}
+          value={skeletonText}
+          onChange={(e) => setSkeletonText(e.target.value)}
+          className="w-full bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-sm focus:border-emerald-500 outline-none font-mono disabled:opacity-60"
+          placeholder="1,2 2,3 3,4"
+        />
+      </div>
+      {!locked && (
+        <div className="mt-3">
+          <button
+            onClick={save} disabled={saving}
+            className="bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 px-3 py-1.5 rounded text-sm font-medium"
+          >
+            {saving ? "Saving…" : "Save keypoint schema"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
