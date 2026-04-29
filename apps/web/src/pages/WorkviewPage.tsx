@@ -915,6 +915,13 @@ export function WorkviewPage() {
   }, [classes]);
 
   const activeClass = activeClassId ? classMap.get(activeClassId) : null;
+  const canvasCursor = isPanning
+    ? "grab"
+    : tool === "brush"
+        ? "none"
+        : tool === "comment"
+          ? "copy"
+          : "crosshair";
 
   const idx = siblings.findIndex((s) => s.id === imageId);
 
@@ -1033,7 +1040,7 @@ export function WorkviewPage() {
             scaleX={view.scale}
             scaleY={view.scale}
             style={{
-              cursor: isPanning ? "grab" : tool === "auto" ? "crosshair" : "crosshair",
+              cursor: canvasCursor,
               background: "#171717",
             }}
           >
@@ -1640,11 +1647,17 @@ export function WorkviewPage() {
                   return (
                     <li
                       key={a.id}
+                      onClick={() => selectAnnotation(a)}
                       onMouseEnter={() => setHoverAnnId(a.id)}
                       onMouseLeave={() => setHoverAnnId(null)}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm group ${
-                        hoverAnnId === a.id ? "bg-neutral-800" : ""
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm group cursor-pointer select-none ${
+                        selectedAnnId === a.id
+                          ? "bg-emerald-500/15 ring-1 ring-emerald-500/50 text-neutral-100"
+                          : hoverAnnId === a.id
+                            ? "bg-neutral-800"
+                            : "hover:bg-neutral-800/50"
                       }`}
+                      title="Click to select and highlight this annotation"
                     >
                       <span className="w-2.5 h-2.5 rounded" style={{ background: c?.color ?? "#888" }} />
                       <span className="flex-1 truncate">{c?.name ?? "?"} #{i + 1}</span>
@@ -1653,7 +1666,10 @@ export function WorkviewPage() {
                         <span className="text-[10px] text-emerald-400" title={`SAM2 confidence ${a.confidence}`}>✨</span>
                       )}
                       <button
-                        onClick={() => deleteAnnotation(a.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteAnnotation(a.id);
+                        }}
                         className="text-neutral-600 hover:text-rose-400 opacity-0 group-hover:opacity-100"
                       >✕</button>
                     </li>

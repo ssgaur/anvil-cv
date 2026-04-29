@@ -95,6 +95,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       ML_SERVICE_URL: http://ml:8001
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-minio}
+      # The API and ML containers both need filesystem access for local-mode
+      # images/embeddings. Override any host-specific .env STORAGE_ROOT.
+      STORAGE_ROOT: /data
       MINIO_ENDPOINT: http://minio:9000
       CORS_ORIGINS: http://localhost:5173
     depends_on:
@@ -105,6 +108,8 @@ services:
       minio-init:
         condition: service_completed_successfully
     ports: ["8000:8000"]
+    volumes:
+      - local_data:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 10s
@@ -126,6 +131,7 @@ services:
         condition: service_completed_successfully
     ports: ["8001:8001"]
     volumes:
+      - local_data:/data
       - checkpoints:/checkpoints:ro
       - adapters:/adapters
     healthcheck:
@@ -144,6 +150,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-anvil}:${POSTGRES_PASSWORD:-anvil}@postgres:5432/${POSTGRES_DB:-anvil}
       REDIS_URL: redis://redis:6379/0
       ML_SERVICE_URL: http://ml:8001
+      STORAGE_ROOT: /data
       MINIO_ENDPOINT: http://minio:9000
     depends_on:
       redis:
@@ -152,6 +159,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+    volumes:
+      - local_data:/data
     command: arq anvil_worker.main.WorkerSettings
 
   web:
@@ -171,3 +180,4 @@ volumes:
   minio_data:
   checkpoints:
   adapters:
+  local_data:
