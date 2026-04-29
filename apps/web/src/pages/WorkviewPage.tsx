@@ -7,6 +7,7 @@ import { api, fileUrl } from "../lib/api";
 import { toast } from "../lib/toast";
 import { useAuth } from "../store/auth";
 import { isLabeler, isReviewer } from "../lib/roles";
+import { RejectReasonDialog } from "../components/RejectReasonDialog";
 import type { Annotation, ClassProperty, ClassRow, CommentRow, ImageRow, ModelVersion } from "../types";
 
 type Tool = "pan" | "auto" | "polygon" | "polyline" | "bbox" | "obb" | "brush" | "keypoint" | "comment";
@@ -2326,22 +2327,18 @@ const REVIEW_STYLES: Record<string, { label: string; bg: string; fg: string; dot
 
 function ReviewControls({ image, onReload }: { image: ImageRow | null; onReload: () => void | Promise<void> }) {
   const [busy, setBusy] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
   const role = useAuth((s) => s.user?.role);
   const canSubmit = isLabeler(role);
   const canReview = isReviewer(role);
   if (!image) return null;
   const st = REVIEW_STYLES[image.review_status] ?? REVIEW_STYLES.new;
 
-  async function act(action: "submit" | "approve" | "reject" | "reopen") {
-    let reason: string | undefined = undefined;
-    if (action === "reject") {
-      const r = window.prompt("Reject reason (required):");
-      if (!r || !r.trim()) return;
-      reason = r.trim();
-    }
+  async function act(action: "submit" | "approve" | "reject" | "reopen", reason?: string) {
     setBusy(true);
     try {
       await api.reviewAction(image!.id, { action, reason });
+      if (action === "reject") setRejectOpen(false);
       await onReload();
     } catch (e) {
       toast.error(e, "Review action failed");
@@ -2352,41 +2349,49 @@ function ReviewControls({ image, onReload }: { image: ImageRow | null; onReload:
 
   const status = image.review_status;
   return (
-    <div className="flex items-center gap-1">
-      <span
-        title={image.review_reason ? `Reason: ${image.review_reason}` : undefined}
-        className={`text-[11px] px-2 py-1 rounded-full inline-flex items-center gap-1.5 ${st.bg} ${st.fg}`}
-      >
-        <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
-        {st.label}
-      </span>
-      {canSubmit && (status === "new" || status === "in_progress" || status === "rejected") && (
-        <button
-          onClick={() => act("submit")} disabled={busy}
-          className="text-xs bg-amber-500 hover:bg-amber-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
-          title="Submit for review"
-        >Submit ▸</button>
-      )}
-      {canReview && status === "submitted" && (
-        <>
+    <>
+      <div className="flex items-center gap-1">
+        <span
+          title={image.review_reason ? `Reason: ${image.review_reason}` : undefined}
+          className={`text-[11px] px-2 py-1 rounded-full inline-flex items-center gap-1.5 ${st.bg} ${st.fg}`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
+          {st.label}
+        </span>
+        {canSubmit && (status === "new" || status === "in_progress" || status === "rejected") && (
           <button
-            onClick={() => act("approve")} disabled={busy}
-            className="text-xs bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
-          >✓ Approve</button>
+            onClick={() => act("submit")} disabled={busy}
+            className="text-xs bg-amber-500 hover:bg-amber-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
+            title="Submit for review"
+          >Submit ▸</button>
+        )}
+        {canReview && status === "submitted" && (
+          <>
+            <button
+              onClick={() => act("approve")} disabled={busy}
+              className="text-xs bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
+            >✓ Approve</button>
+            <button
+              onClick={() => setRejectOpen(true)} disabled={busy}
+              className="text-xs bg-rose-500 hover:bg-rose-400 disabled:bg-neutral-700 text-white font-medium px-3 py-1 rounded"
+            >✕ Reject</button>
+          </>
+        )}
+        {canReview && (status === "approved" || status === "rejected") && (
           <button
-            onClick={() => act("reject")} disabled={busy}
-            className="text-xs bg-rose-500 hover:bg-rose-400 disabled:bg-neutral-700 text-white font-medium px-3 py-1 rounded"
-          >✕ Reject</button>
-        </>
-      )}
-      {canReview && (status === "approved" || status === "rejected") && (
-        <button
-          onClick={() => act("reopen")} disabled={busy}
-          className="text-xs bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 text-neutral-100 px-3 py-1 rounded"
-          title="Reopen for editing"
-        >↺ Reopen</button>
-      )}
-    </div>
+            onClick={() => act("reopen")} disabled={busy}
+            className="text-xs bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 text-neutral-100 px-3 py-1 rounded"
+            title="Reopen for editing"
+          >↺ Reopen</button>
+        )}
+      </div>
+      <RejectReasonDialog
+        open={rejectOpen}
+        busy={busy}
+        onCancel={() => setRejectOpen(false)}
+        onConfirm={(reason) => act("reject", reason)}
+      />
+    </>
   );
 }
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, downloadCocoExport, fileUrl, type ImageListOpts, type ImageSort } from "../lib/api";
 import { toast } from "../lib/toast";
+import { RejectReasonDialog } from "../components/RejectReasonDialog";
 import type { ClassRow, Dataset, ImageRow, ReviewStatus } from "../types";
 
 const SORT_LABELS: Record<ImageSort, string> = {
@@ -29,6 +30,8 @@ export function DatasetDetailPage() {
   const [filter, setFilter] = useState<"all" | "ready" | "uploaded" | "embedding" | "failed">("all");
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [bulkReviewBusy, setBulkReviewBusy] = useState(false);
 
   // Selection state for bulk ops (persists across pagination loadMore).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -209,14 +212,9 @@ export function DatasetDetailPage() {
     } catch (e) { toast.error(e, "Bulk delete failed"); }
   }
 
-  async function bulkReview(action: "reset" | "reopen" | "reject") {
+  async function bulkReview(action: "reset" | "reopen" | "reject", reason?: string) {
     if (selected.size === 0) return;
-    let reason: string | undefined;
-    if (action === "reject") {
-      const r = prompt("Rejection reason (required):");
-      if (!r || !r.trim()) return;
-      reason = r.trim();
-    }
+    setBulkReviewBusy(true);
     try {
       const r = await api.bulkReviewImages(projectId, datasetId, {
         image_ids: [...selected], action, reason,
@@ -227,9 +225,11 @@ export function DatasetDetailPage() {
       } else {
         toast.success(`${action}: ${okN} image(s)`);
       }
+      if (action === "reject") setBulkRejectOpen(false);
       setSelected(new Set());
       await reload();
     } catch (e) { toast.error(e, `Bulk ${action} failed`); }
+    finally { setBulkReviewBusy(false); }
   }
 
   async function bulkMove(targetDatasetId: string) {
@@ -271,7 +271,8 @@ export function DatasetDetailPage() {
   if (!dataset) return <div className="p-8 text-neutral-500">loading…</div>;
 
   return (
-    <div onDragOver={(e) => e.preventDefault()} onDrop={onDrop} className="min-h-full">
+    <>
+      <div onDragOver={(e) => e.preventDefault()} onDrop={onDrop} className="min-h-full">
       <div className="border-b border-neutral-800 px-8 pt-6 pb-4">
         <div className="text-xs text-neutral-500 mb-1">
           <Link to="/projects" className="hover:text-neutral-300">Projects</Link> ·{" "}
@@ -467,9 +468,9 @@ export function DatasetDetailPage() {
             Clear
           </button>
           <span className="mx-2 h-4 w-px bg-neutral-800" />
-          <button onClick={() => bulkReview("reset")} className="text-xs px-3 py-1 rounded bg-neutral-700 text-neutral-200 hover:bg-neutral-600 border border-neutral-600">Reset to new</button>
-          <button onClick={() => bulkReview("reopen")} className="text-xs px-3 py-1 rounded bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 border border-blue-500/40">Reopen</button>
-          <button onClick={() => bulkReview("reject")} className="text-xs px-3 py-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40">Reject…</button>
+          <button onClick={() => bulkReview("reset")} disabled={bulkReviewBusy} className="text-xs px-3 py-1 rounded bg-neutral-700 text-neutral-200 hover:bg-neutral-600 disabled:opacity-50 border border-neutral-600">Reset to new</button>
+          <button onClick={() => bulkReview("reopen")} disabled={bulkReviewBusy} className="text-xs px-3 py-1 rounded bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 disabled:opacity-50 border border-blue-500/40">Reopen</button>
+          <button onClick={() => setBulkRejectOpen(true)} disabled={bulkReviewBusy} className="text-xs px-3 py-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 disabled:opacity-50 border border-rose-500/40">Reject…</button>
           <span className="mx-2 h-4 w-px bg-neutral-800" />
           <select
             defaultValue=""
@@ -539,7 +540,16 @@ export function DatasetDetailPage() {
           )}
         </div>
       )}
-    </div>
+      </div>
+      <RejectReasonDialog
+        open={bulkRejectOpen}
+        title={`Reject ${selected.size} selected image${selected.size === 1 ? "" : "s"}`}
+        description="Add a reason that applies to every selected image."
+        busy={bulkReviewBusy}
+        onCancel={() => setBulkRejectOpen(false)}
+        onConfirm={(reason) => bulkReview("reject", reason)}
+      />
+    </>
   );
 }
 
