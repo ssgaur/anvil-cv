@@ -51,8 +51,14 @@ export function WorkviewPage() {
   // Polygon vertex edit
   const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null);
   const [editPoly, setEditPoly] = useState<[number, number][] | null>(null);
+  const [editPolyline, setEditPolyline] = useState<[number, number][] | null>(null);
   // Bbox handle edit (live buffer while dragging handles or moving the box)
   const [editBbox, setEditBbox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [editObb, setEditObb] = useState<{ cx: number; cy: number; w: number; h: number; angle_rad: number } | null>(null);
+  const [editKeypoints, setEditKeypoints] = useState<[number, number, 0 | 1 | 2][] | null>(null);
+  const editPolylineRef = useRef<[number, number][] | null>(null);
+  const editObbRef = useRef<{ cx: number; cy: number; w: number; h: number; angle_rad: number } | null>(null);
+  const editKeypointsRef = useRef<[number, number, 0 | 1 | 2][] | null>(null);
   // Snapshot of the annotation taken when entering edit mode (for undo of polygon edits)
   const editBeforeRef = useRef<Annotation | null>(null);
 
@@ -93,6 +99,33 @@ export function WorkviewPage() {
     }
     setHasBrushStrokes(false);
     setMaskVersion((v) => v + 1);
+  }
+
+  function clearEditBuffers() {
+    setEditPoly(null);
+    editPolylineRef.current = null;
+    setEditPolyline(null);
+    setEditBbox(null);
+    editObbRef.current = null;
+    setEditObb(null);
+    editKeypointsRef.current = null;
+    setEditKeypoints(null);
+    editBeforeRef.current = null;
+  }
+
+  function setEditPolylineLive(next: [number, number][] | null) {
+    editPolylineRef.current = next;
+    setEditPolyline(next);
+  }
+
+  function setEditObbLive(next: { cx: number; cy: number; w: number; h: number; angle_rad: number } | null) {
+    editObbRef.current = next;
+    setEditObb(next);
+  }
+
+  function setEditKeypointsLive(next: [number, number, 0 | 1 | 2][] | null) {
+    editKeypointsRef.current = next;
+    setEditKeypoints(next);
   }
 
   function paintStroke(from: [number, number] | null, to: [number, number], erase: boolean) {
@@ -172,7 +205,7 @@ export function WorkviewPage() {
       // Undo a create => delete.
       await api.deleteAnnotation(op.ann.id);
       setAnnotations((arr) => arr.filter((a) => a.id !== op.ann.id));
-      if (selectedAnnId === op.ann.id) { setSelectedAnnId(null); setEditPoly(null); setEditBbox(null); }
+    if (selectedAnnId === op.ann.id) { setSelectedAnnId(null); clearEditBuffers(); }
       return { kind: "delete", ann: op.ann };
     }
     if (op.kind === "delete") {
@@ -197,9 +230,7 @@ export function WorkviewPage() {
       geometry: op.before.geometry,
     });
     setAnnotations((arr) => arr.map((x) => (x.id === reverted.id ? reverted : x)));
-    if (selectedAnnId === reverted.id && reverted.geometry_type === "polygon" && reverted.geometry.points) {
-      setEditPoly(reverted.geometry.points.map((p: number[]) => [p[0], p[1]] as [number, number]));
-    }
+    if (selectedAnnId === reverted.id) selectAnnotation(reverted);
     return { kind: "update", before: op.after, after: op.before };
   }
   async function undo() {
@@ -291,7 +322,7 @@ export function WorkviewPage() {
 
   // Reset selection / prompts when switching images
   useEffect(() => {
-    setSelectedAnnId(null); setEditPoly(null); setEditBbox(null);
+    setSelectedAnnId(null); clearEditBuffers();
     editBeforeRef.current = null;
     setUndoStack([]); setRedoStack([]);
     clearPrompts();
@@ -445,7 +476,7 @@ export function WorkviewPage() {
         setPolyPoints([]); setPolylinePoints([]); setBboxStart(null); setBboxEnd(null);
         setKpDrops([]);
         clearPrompts();
-        setSelectedAnnId(null); setEditPoly(null); setEditBbox(null);
+        setSelectedAnnId(null); clearEditBuffers();
         if (tool === "brush") clearMask();
       }
       else if (e.key === "Enter" && tool === "polygon" && polyPoints.length >= 3) commitPolygon();
@@ -782,28 +813,44 @@ export function WorkviewPage() {
     const target = annotations.find((a) => a.id === id);
     await api.deleteAnnotation(id);
     setAnnotations((arr) => arr.filter((a) => a.id !== id));
-    if (selectedAnnId === id) { setSelectedAnnId(null); setEditPoly(null); setEditBbox(null); }
+    if (selectedAnnId === id) { setSelectedAnnId(null); clearEditBuffers(); }
     if (target) pushOp({ kind: "delete", ann: target });
   }
 
   // ---- Polygon vertex editing ----
   function selectAnnotation(a: Annotation) {
     setSelectedAnnId(a.id);
+    clearEditBuffers();
     if (a.geometry_type === "polygon" && a.geometry.points) {
       setEditPoly(a.geometry.points.map((p: number[]) => [p[0], p[1]] as [number, number]));
-      setEditBbox(null);
+      editBeforeRef.current = a;
+      return;
+    }
+    if (a.geometry_type === "polyline" && a.geometry.points) {
+      setEditPolylineLive(a.geometry.points.map((p: number[]) => [p[0], p[1]] as [number, number]));
       editBeforeRef.current = a;
       return;
     }
     if (a.geometry_type === "bbox" && a.geometry.x !== undefined) {
       setEditBbox({ x: a.geometry.x!, y: a.geometry.y!, w: a.geometry.w!, h: a.geometry.h! });
-      setEditPoly(null);
       editBeforeRef.current = a;
       return;
     }
-    setEditPoly(null);
-    setEditBbox(null);
-    editBeforeRef.current = null;
+    if (a.geometry_type === "obb" && a.geometry.cx !== undefined) {
+      setEditObbLive({
+        cx: a.geometry.cx!,
+        cy: a.geometry.cy!,
+        w: a.geometry.w!,
+        h: a.geometry.h!,
+        angle_rad: a.geometry.angle_rad ?? 0,
+      });
+      editBeforeRef.current = a;
+      return;
+    }
+    if (a.geometry_type === "keypoints" && a.geometry.points) {
+      setEditKeypointsLive(a.geometry.points.map((p: number[]) => [p[0], p[1], (p[2] ?? 2) as 0 | 1 | 2]));
+      editBeforeRef.current = a;
+    }
   }
 
   async function flushEditPoly() {
@@ -851,6 +898,56 @@ export function WorkviewPage() {
     const next = [...editPoly.slice(0, j), [mx, my] as [number, number], ...editPoly.slice(j)];
     setEditPoly(next);
     setTimeout(flushEditPoly, 0);
+  }
+
+  async function flushEditPolyline(points = editPolylineRef.current) {
+    if (!selectedAnnId || !points) return;
+    const before = editBeforeRef.current;
+    try {
+      const updated = await api.updateAnnotation(selectedAnnId, {
+        geometry: { points },
+      });
+      setAnnotations((arr) => arr.map((x) => (x.id === selectedAnnId ? updated : x)));
+      if (before && before.id === updated.id) {
+        const samePts = JSON.stringify(before.geometry?.points) === JSON.stringify(updated.geometry?.points);
+        if (!samePts) pushOp({ kind: "update", before, after: updated });
+      }
+      editBeforeRef.current = updated;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "update failed");
+    }
+  }
+
+  function movePolylineVertex(i: number, x: number, y: number) {
+    const cur = editPolylineRef.current ?? editPolyline;
+    if (!cur) return;
+    const next = cur.slice();
+    next[i] = [x, y];
+    setEditPolylineLive(next);
+  }
+
+  function deletePolylineVertex(i: number) {
+    const cur = editPolylineRef.current ?? editPolyline;
+    if (!cur || cur.length <= 2) {
+      setError("Polyline needs at least 2 vertices");
+      return;
+    }
+    const next = cur.filter((_, idx) => idx !== i);
+    setEditPolylineLive(next);
+    flushEditPolyline(next);
+  }
+
+  function insertPolylineVertexAt(afterIndex: number) {
+    const cur = editPolylineRef.current ?? editPolyline;
+    if (!cur) return;
+    const i = afterIndex;
+    const j = i + 1;
+    if (!cur[j]) return;
+    const mx = (cur[i][0] + cur[j][0]) / 2;
+    const my = (cur[i][1] + cur[j][1]) / 2;
+    const next = [...cur.slice(0, j), [mx, my] as [number, number], ...cur.slice(j)];
+    setEditPolylineLive(next);
+    flushEditPolyline(next);
   }
 
   // ---- Bbox 8-handle editing ----
@@ -902,6 +999,112 @@ export function WorkviewPage() {
           before.geometry?.h === updated.geometry?.h;
         if (!same) pushOp({ kind: "update", before, after: updated });
       }
+      editBeforeRef.current = updated;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "update failed");
+    }
+  }
+
+  function rotatePoint(x: number, y: number, cx: number, cy: number, angle: number): [number, number] {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const dx = x - cx;
+    const dy = y - cy;
+    return [cx + dx * c - dy * s, cy + dx * s + dy * c];
+  }
+
+  function obbCorners(obb: { cx: number; cy: number; w: number; h: number; angle_rad: number }) {
+    const hw = obb.w / 2;
+    const hh = obb.h / 2;
+    return [
+      rotatePoint(obb.cx - hw, obb.cy - hh, obb.cx, obb.cy, obb.angle_rad),
+      rotatePoint(obb.cx + hw, obb.cy - hh, obb.cx, obb.cy, obb.angle_rad),
+      rotatePoint(obb.cx + hw, obb.cy + hh, obb.cx, obb.cy, obb.angle_rad),
+      rotatePoint(obb.cx - hw, obb.cy + hh, obb.cx, obb.cy, obb.angle_rad),
+    ] as [number, number][];
+  }
+
+  function updateObbSizeFromHandle(x: number, y: number) {
+    const cur = editObbRef.current ?? editObb;
+    if (!cur) return;
+    const c = Math.cos(-cur.angle_rad);
+    const s = Math.sin(-cur.angle_rad);
+    const dx = x - cur.cx;
+    const dy = y - cur.cy;
+    const localX = dx * c - dy * s;
+    const localY = dx * s + dy * c;
+    setEditObbLive({
+      ...cur,
+      w: Math.max(2, Math.abs(localX) * 2),
+      h: Math.max(2, Math.abs(localY) * 2),
+    });
+  }
+
+  function updateObbRotation(x: number, y: number) {
+    const cur = editObbRef.current ?? editObb;
+    if (!cur) return;
+    setEditObbLive({
+      ...cur,
+      angle_rad: Math.atan2(y - cur.cy, x - cur.cx) + Math.PI / 2,
+    });
+  }
+
+  async function flushEditObb(obb = editObbRef.current) {
+    if (!selectedAnnId || !obb) return;
+    const before = editBeforeRef.current;
+    try {
+      const updated = await api.updateAnnotation(selectedAnnId, {
+        geometry: { ...obb },
+      });
+      setAnnotations((arr) => arr.map((x) => (x.id === selectedAnnId ? updated : x)));
+      if (before && before.id === updated.id) {
+        const same = JSON.stringify(before.geometry) === JSON.stringify(updated.geometry);
+        if (!same) pushOp({ kind: "update", before, after: updated });
+      }
+      setEditObbLive({
+        cx: updated.geometry.cx!,
+        cy: updated.geometry.cy!,
+        w: updated.geometry.w!,
+        h: updated.geometry.h!,
+        angle_rad: updated.geometry.angle_rad ?? 0,
+      });
+      editBeforeRef.current = updated;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "update failed");
+    }
+  }
+
+  function moveKeypoint(i: number, x: number, y: number) {
+    const cur = editKeypointsRef.current ?? editKeypoints;
+    if (!cur) return;
+    const next = cur.slice();
+    next[i] = [x, y, next[i][2]];
+    setEditKeypointsLive(next);
+  }
+
+  function cycleKeypointVisibility(i: number) {
+    const cur = editKeypointsRef.current ?? editKeypoints;
+    if (!cur) return;
+    const next = cur.slice();
+    const v = next[i][2];
+    next[i] = [next[i][0], next[i][1], v === 2 ? 1 : v === 1 ? 0 : 2];
+    setEditKeypointsLive(next);
+    flushEditKeypoints(next);
+  }
+
+  async function flushEditKeypoints(points = editKeypointsRef.current) {
+    if (!selectedAnnId || !points) return;
+    const before = editBeforeRef.current;
+    try {
+      const updated = await api.updateAnnotation(selectedAnnId, {
+        geometry: { points },
+      });
+      setAnnotations((arr) => arr.map((x) => (x.id === selectedAnnId ? updated : x)));
+      if (before && before.id === updated.id) {
+        const samePts = JSON.stringify(before.geometry?.points) === JSON.stringify(updated.geometry?.points);
+        if (!samePts) pushOp({ kind: "update", before, after: updated });
+      }
+      setEditKeypointsLive(updated.geometry.points!.map((p: number[]) => [p[0], p[1], (p[2] ?? 2) as 0 | 1 | 2]));
       editBeforeRef.current = updated;
     } catch (err) {
       setError(err instanceof Error ? err.message : "update failed");
@@ -1121,7 +1324,8 @@ export function WorkviewPage() {
                   );
                 }
                 if (a.geometry_type === "polyline" && a.geometry.points) {
-                  const flat = a.geometry.points.flat();
+                  const pts = isSelected && editPolyline ? editPolyline : a.geometry.points;
+                  const flat = pts.flat();
                   return (
                     <Line
                       key={a.id}
@@ -1137,23 +1341,40 @@ export function WorkviewPage() {
                   );
                 }
                 if (a.geometry_type === "obb" && a.geometry.cx !== undefined) {
-                  const w = a.geometry.w ?? 0;
-                  const h = a.geometry.h ?? 0;
-                  const cx = a.geometry.cx ?? 0;
-                  const cy = a.geometry.cy ?? 0;
-                  const angRad = a.geometry.angle_rad ?? 0;
+                  const obb = isSelected && editObb
+                    ? editObb
+                    : {
+                        cx: a.geometry.cx ?? 0,
+                        cy: a.geometry.cy ?? 0,
+                        w: a.geometry.w ?? 0,
+                        h: a.geometry.h ?? 0,
+                        angle_rad: a.geometry.angle_rad ?? 0,
+                      };
                   // Konva uses degrees; rotation is around (x,y); offset positions
                   // the rect so its center aligns with (cx,cy).
                   return (
                     <Rect
                       key={a.id}
-                      x={cx} y={cy}
-                      width={w} height={h}
-                      offsetX={w / 2} offsetY={h / 2}
-                      rotation={(angRad * 180) / Math.PI}
+                      x={obb.cx} y={obb.cy}
+                      width={obb.w} height={obb.h}
+                      offsetX={obb.w / 2} offsetY={obb.h / 2}
+                      rotation={(obb.angle_rad * 180) / Math.PI}
                       stroke={color}
                       strokeWidth={(isSelected ? 3 : 2) / view.scale}
                       fill={color + "22"}
+                      draggable={isSelected}
+                      onDragStart={() => { wasDragRef.current = true; }}
+                      onDragMove={(ev) => {
+                        if (!isSelected || !editObb) return;
+                        setEditObbLive({ ...editObb, cx: ev.target.x(), cy: ev.target.y() });
+                      }}
+                      onDragEnd={(ev) => {
+                        if (editObbRef.current) {
+                          setEditObbLive({ ...editObbRef.current, cx: ev.target.x(), cy: ev.target.y() });
+                        }
+                        wasDragRef.current = true;
+                        flushEditObb();
+                      }}
                       onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
                       onMouseEnter={() => setHoverAnnId(a.id)}
                       onMouseLeave={() => setHoverAnnId(null)}
@@ -1163,13 +1384,14 @@ export function WorkviewPage() {
                 if (a.geometry_type === "keypoints" && a.geometry.points) {
                   const cls2 = classMap.get(a.class_id);
                   const schema = cls2?.keypoint_schema;
+                  const pts = isSelected && editKeypoints ? editKeypoints : a.geometry.points;
                   const r = (isSelected ? 6 : 4) / view.scale;
                   const sw = (isSelected ? 2.5 : 1.5) / view.scale;
                   return (
                     <React.Fragment key={a.id}>
                       {schema?.edges.map(([i, j], k) => {
-                        const pi = a.geometry.points![i];
-                        const pj = a.geometry.points![j];
+                        const pi = pts[i];
+                        const pj = pts[j];
                         if (!pi || !pj) return null;
                         if (pi[2] === 0 || pj[2] === 0) return null;
                         return (
@@ -1182,7 +1404,7 @@ export function WorkviewPage() {
                           />
                         );
                       })}
-                      {a.geometry.points.map((p, i) => {
+                      {pts.map((p, i) => {
                         const v = p[2];
                         if (v === 0) return null;
                         return (
@@ -1192,7 +1414,21 @@ export function WorkviewPage() {
                             fill={v === 2 ? color : "#000000"}
                             stroke={color} strokeWidth={sw}
                             opacity={v === 2 ? 1 : 0.6}
-                            onClick={(ev) => { ev.cancelBubble = true; selectAnnotation(a); }}
+                            draggable={isSelected}
+                            onClick={(ev) => {
+                              ev.cancelBubble = true;
+                              if (isSelected && (ev.evt.shiftKey || ev.evt.altKey)) {
+                                cycleKeypointVisibility(i);
+                              } else {
+                                selectAnnotation(a);
+                              }
+                            }}
+                            onDragStart={() => { wasDragRef.current = true; }}
+                            onDragMove={(ev) => {
+                              if (!isSelected) return;
+                              moveKeypoint(i, ev.target.x(), ev.target.y());
+                            }}
+                            onDragEnd={() => { wasDragRef.current = true; flushEditKeypoints(); }}
                             onMouseEnter={() => setHoverAnnId(a.id)}
                             onMouseLeave={() => setHoverAnnId(null)}
                           />
@@ -1207,6 +1443,7 @@ export function WorkviewPage() {
               {/* Vertex + edge-midpoint handles for selected polygon */}
               {selectedAnnId && editPoly && (() => {
                 const sel = annotations.find((x) => x.id === selectedAnnId);
+                if (!sel || sel.geometry_type !== "polygon") return null;
                 const color = sel ? (classMap.get(sel.class_id)?.color ?? "#3b82f6") : "#3b82f6";
                 const r = 5 / view.scale;
                 const er = 3.5 / view.scale;
@@ -1241,6 +1478,50 @@ export function WorkviewPage() {
                         }}
                         onDragMove={(ev) => moveVertex(i, ev.target.x(), ev.target.y())}
                         onDragEnd={() => { wasDragRef.current = true; flushEditPoly(); }}
+                      />
+                    ))}
+                  </>
+                );
+              })()}
+
+              {/* Vertex + segment-midpoint handles for selected polyline */}
+              {selectedAnnId && editPolyline && (() => {
+                const sel = annotations.find((x) => x.id === selectedAnnId);
+                if (!sel || sel.geometry_type !== "polyline") return null;
+                const color = classMap.get(sel.class_id)?.color ?? "#3b82f6";
+                const r = 5 / view.scale;
+                const er = 3.5 / view.scale;
+                return (
+                  <>
+                    {editPolyline.slice(0, -1).map(([x, y], i) => {
+                      const j = i + 1;
+                      const mx = (x + editPolyline[j][0]) / 2;
+                      const my = (y + editPolyline[j][1]) / 2;
+                      return (
+                        <Circle
+                          key={`pl-mid-${i}`}
+                          x={mx} y={my} radius={er}
+                          fill="#ffffff" stroke={color}
+                          strokeWidth={1 / view.scale}
+                          opacity={0.8}
+                          onClick={(ev) => { ev.cancelBubble = true; wasDragRef.current = true; insertPolylineVertexAt(i); }}
+                        />
+                      );
+                    })}
+                    {editPolyline.map(([x, y], i) => (
+                      <Circle
+                        key={`pl-v-${i}`}
+                        x={x} y={y} radius={r}
+                        fill={color} stroke="#ffffff"
+                        strokeWidth={1.5 / view.scale}
+                        draggable
+                        onClick={(ev) => {
+                          if (ev.evt.shiftKey || ev.evt.altKey) {
+                            ev.cancelBubble = true; wasDragRef.current = true; deletePolylineVertex(i);
+                          }
+                        }}
+                        onDragMove={(ev) => movePolylineVertex(i, ev.target.x(), ev.target.y())}
+                        onDragEnd={() => { wasDragRef.current = true; flushEditPolyline(); }}
                       />
                     ))}
                   </>
@@ -1301,6 +1582,62 @@ export function WorkviewPage() {
                         />
                       );
                     })}
+                  </>
+                );
+              })()}
+
+              {/* Move / resize / rotate handles for selected OBB */}
+              {selectedAnnId && editObb && (() => {
+                const sel = annotations.find((x) => x.id === selectedAnnId);
+                if (!sel || sel.geometry_type !== "obb") return null;
+                const color = classMap.get(sel.class_id)?.color ?? "#3b82f6";
+                const r = 5 / view.scale;
+                const corners = obbCorners(editObb);
+                const topMid: [number, number] = [
+                  (corners[0][0] + corners[1][0]) / 2,
+                  (corners[0][1] + corners[1][1]) / 2,
+                ];
+                const rot: [number, number] = rotatePoint(
+                  editObb.cx,
+                  editObb.cy - editObb.h / 2 - 28 / view.scale,
+                  editObb.cx,
+                  editObb.cy,
+                  editObb.angle_rad,
+                );
+                return (
+                  <>
+                    <Line
+                      points={[topMid[0], topMid[1], rot[0], rot[1]]}
+                      stroke={color}
+                      strokeWidth={1.25 / view.scale}
+                      dash={[4 / view.scale, 3 / view.scale]}
+                      listening={false}
+                    />
+                    {corners.map(([x, y], i) => (
+                      <Rect
+                        key={`obb-c-${i}`}
+                        x={x - r} y={y - r}
+                        width={r * 2} height={r * 2}
+                        fill="#ffffff"
+                        stroke={color}
+                        strokeWidth={1.5 / view.scale}
+                        draggable
+                        onDragStart={() => { wasDragRef.current = true; }}
+                        onDragMove={(ev) => updateObbSizeFromHandle(ev.target.x() + r, ev.target.y() + r)}
+                        onDragEnd={() => { wasDragRef.current = true; flushEditObb(); }}
+                      />
+                    ))}
+                    <Circle
+                      key="obb-rot"
+                      x={rot[0]} y={rot[1]} radius={r * 1.25}
+                      fill="#f59e0b"
+                      stroke="#ffffff"
+                      strokeWidth={1.5 / view.scale}
+                      draggable
+                      onDragStart={() => { wasDragRef.current = true; }}
+                      onDragMove={(ev) => updateObbRotation(ev.target.x(), ev.target.y())}
+                      onDragEnd={() => { wasDragRef.current = true; flushEditObb(); }}
+                    />
                   </>
                 );
               })()}
