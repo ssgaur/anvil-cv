@@ -447,6 +447,7 @@ export function WorkviewPage() {
   useEffect(() => {
     function k(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const key = e.key.toLowerCase();
       const mod = e.metaKey || e.ctrlKey;
       if (mod && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
@@ -459,19 +460,19 @@ export function WorkviewPage() {
         if (!e.repeat) { e.preventDefault(); setSpacePan(true); }
         return;
       }
-      if (e.key === "f" || e.key === "F") { fitToScreen(); return; }
+      if (key === "f") { fitToScreen(); return; }
       if (e.key === "0") { zoomTo100(); return; }
       if (e.key === "?" || (e.key === "/" && e.shiftKey)) { e.preventDefault(); setShowHelp((v) => !v); return; }
-      if (e.key === "h" || e.key === "H") { setShowHelp((v) => !v); return; }
-      if (e.key === "v") setTool("pan");
-      else if (e.key === "a") setTool("auto");
-      else if (e.key === "p") setTool("polygon");
-      else if (e.key === "l") setTool("polyline");
-      else if (e.key === "b") setTool("bbox");
-      else if (e.key === "o") setTool("obb");
-      else if (e.key === "r") setTool("brush");
-      else if (e.key === "k") setTool("keypoint");
-      else if (e.key === "t") setTool("comment");
+      if (key === "h") { setShowHelp((v) => !v); return; }
+      if (key === "v") setTool("pan");
+      else if (key === "a") setTool("auto");
+      else if (key === "p") setTool("polygon");
+      else if (key === "l") setTool("polyline");
+      else if (key === "b") setTool("bbox");
+      else if (key === "o") setTool("obb");
+      else if (key === "r") setTool("brush");
+      else if (key === "k") setTool("keypoint");
+      else if (key === "t") setTool("comment");
       else if (e.key === "Escape") {
         if (showHelp) { setShowHelp(false); return; }
         setPolyPoints([]); setPolylinePoints([]); setBboxStart(null); setBboxEnd(null);
@@ -510,7 +511,7 @@ export function WorkviewPage() {
       window.removeEventListener("blur", blur);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, polyPoints, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp, classes]);
+  }, [tool, polyPoints, polylinePoints, activeClassId, image, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp, classes]);
 
   // Helpers
   function imagePoint(stageX: number, stageY: number): [number, number] {
@@ -623,8 +624,10 @@ export function WorkviewPage() {
         setPrompts({ points: [[ix, iy, 1]], box: null });
       }
     } else if (tool === "polygon") {
+      if (!activeClassId) { setError("Pick a class on the right first."); return; }
       setPolyPoints([...polyPoints, [ix, iy]]);
     } else if (tool === "polyline") {
+      if (!activeClassId) { setError("Pick a class on the right first."); return; }
       setPolylinePoints([...polylinePoints, [ix, iy]]);
     } else if (tool === "keypoint") {
       const cls = classes.find((c) => c.id === activeClassId);
@@ -747,7 +750,9 @@ export function WorkviewPage() {
   }
 
   async function commitPolygon() {
-    if (!image || !activeClassId || polyPoints.length < 3) return;
+    if (!image) return;
+    if (!activeClassId) { setError("Pick a class on the right first."); return; }
+    if (polyPoints.length < 3) { setError("Polygon needs at least 3 points."); return; }
     try {
       const a = await api.createAnnotation(imageId, {
         class_id: activeClassId,
@@ -762,7 +767,9 @@ export function WorkviewPage() {
   }
 
   async function commitPolyline() {
-    if (!image || !activeClassId || polylinePoints.length < 2) return;
+    if (!image) return;
+    if (!activeClassId) { setError("Pick a class on the right first."); return; }
+    if (polylinePoints.length < 2) { setError("Polyline needs at least 2 points."); return; }
     try {
       const a = await api.createAnnotation(imageId, {
         class_id: activeClassId,
@@ -1814,6 +1821,12 @@ export function WorkviewPage() {
               {polyPoints.length} points · press Enter to save · Esc to clear
             </div>
           )}
+          {tool === "polyline" && polylinePoints.length > 0 && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
+              {polylinePoints.length} point{polylinePoints.length === 1 ? "" : "s"} ·{" "}
+              {polylinePoints.length >= 2 ? "press Enter to save" : "click at least one more point"} · Esc to clear
+            </div>
+          )}
           {tool === "brush" && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg p-2 flex gap-3 items-center text-xs shadow-xl z-10">
               <span className="text-neutral-300">Brush</span>
@@ -2027,8 +2040,9 @@ export function WorkviewPage() {
           />
 
           <div className="p-3 border-t border-neutral-800 text-[11px] text-neutral-500 space-y-1">
-            <div><kbd className="kbd">V</kbd> pan · <kbd className="kbd">A</kbd> auto · <kbd className="kbd">P</kbd> polygon · <kbd className="kbd">B</kbd> bbox · <kbd className="kbd">R</kbd> brush · <kbd className="kbd">T</kbd> comment</div>
-            <div><kbd className="kbd">Enter</kbd> save · <kbd className="kbd">Esc</kbd> cancel · <kbd className="kbd">←/→</kbd> navigate</div>
+            <div><kbd className="kbd">V</kbd> pan · <kbd className="kbd">A</kbd> auto · <kbd className="kbd">P</kbd> polygon · <kbd className="kbd">L</kbd> polyline · <kbd className="kbd">B</kbd> bbox</div>
+            <div><kbd className="kbd">O</kbd> rotated box · <kbd className="kbd">R</kbd> brush · <kbd className="kbd">K</kbd> keypoints · <kbd className="kbd">T</kbd> comment</div>
+            <div><kbd className="kbd">Enter</kbd> save current drawing · <kbd className="kbd">Esc</kbd> cancel · <kbd className="kbd">←/→</kbd> navigate</div>
             <div><kbd className="kbd">Wheel</kbd> zoom (toward cursor)</div>
           </div>
         </aside>
