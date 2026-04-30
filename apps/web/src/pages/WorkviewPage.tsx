@@ -12,6 +12,87 @@ import type { Annotation, ClassProperty, ClassRow, CommentRow, ImageRow, ModelVe
 
 type Tool = "pan" | "auto" | "polygon" | "polyline" | "bbox" | "obb" | "brush" | "keypoint" | "comment";
 
+type ToolInfo = {
+  name: string;
+  shortcut: string;
+  icon: string;
+  description: string;
+  tip: string;
+};
+
+const TOOL_DETAILS: Record<Tool, ToolInfo> = {
+  pan: {
+    name: "Move",
+    shortcut: "V",
+    icon: "✋",
+    description: "Pan around the image",
+    tip: "Drag the canvas to move around. Hold Space anytime for temporary Move.",
+  },
+  auto: {
+    name: "Auto Segment",
+    shortcut: "A",
+    icon: "✨",
+    description: "Click object, let AI trace it",
+    tip: "Click the object. Shift-click adds hints, Alt-click removes, drag draws a box prompt.",
+  },
+  polygon: {
+    name: "Polygon",
+    shortcut: "P",
+    icon: "⬡",
+    description: "Draw a closed outline",
+    tip: "Click around the object edge, then press Enter to save.",
+  },
+  polyline: {
+    name: "Line",
+    shortcut: "L",
+    icon: "〰",
+    description: "Trace an open path",
+    tip: "Click points along a line, then press Enter to save.",
+  },
+  bbox: {
+    name: "Box",
+    shortcut: "B",
+    icon: "▭",
+    description: "Draw a simple rectangle",
+    tip: "Drag from one corner to the opposite corner.",
+  },
+  obb: {
+    name: "Rotated Box",
+    shortcut: "O",
+    icon: "◇",
+    description: "Box objects at an angle",
+    tip: "Drag to create, then use the rotation handle after selecting it.",
+  },
+  brush: {
+    name: "Brush",
+    shortcut: "R",
+    icon: "🖌",
+    description: "Paint a mask by hand",
+    tip: "Paint the object. Hold Shift to erase, [ and ] resize, Enter saves.",
+  },
+  keypoint: {
+    name: "Keypoints",
+    shortcut: "K",
+    icon: "⊙",
+    description: "Place ordered landmark dots",
+    tip: "Choose a keypoint class, then click each landmark in order.",
+  },
+  comment: {
+    name: "Comment",
+    shortcut: "T",
+    icon: "💬",
+    description: "Leave review notes",
+    tip: "Click the image to pin a note for review or correction.",
+  },
+};
+
+const TOOL_GROUPS: { title: string; tools: Tool[] }[] = [
+  { title: "Navigate", tools: ["pan"] },
+  { title: "AI assist", tools: ["auto"] },
+  { title: "Draw labels", tools: ["polygon", "polyline", "bbox", "obb", "brush", "keypoint"] },
+  { title: "Review", tools: ["comment"] },
+];
+
 export function WorkviewPage() {
   const { projectId = "", datasetId = "", imageId = "" } = useParams();
   const nav = useNavigate();
@@ -1128,30 +1209,35 @@ export function WorkviewPage() {
           : "crosshair";
 
   const idx = siblings.findIndex((s) => s.id === imageId);
+  const activeTool = TOOL_DETAILS[tool];
 
   return (
     <div className="h-screen flex flex-col bg-neutral-950 text-neutral-100">
       {/* Top bar */}
-      <div className="h-12 border-b border-neutral-800 flex items-center px-4 gap-4 text-sm bg-neutral-900">
-        <Link to={`/projects/${projectId}/datasets/${datasetId}`} className="text-neutral-400 hover:text-neutral-100">
-          ← Back to dataset
+      <div className="min-h-16 border-b border-emerald-100/80 flex items-center px-5 gap-4 text-sm bg-gradient-to-r from-[#f7fff8] via-white to-[#ecfdf3] shadow-sm">
+        <Link
+          to={`/projects/${projectId}/datasets/${datasetId}`}
+          className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-neutral-300 shadow-sm hover:border-emerald-400 hover:text-emerald-600"
+        >
+          ← Dataset
         </Link>
-        <div className="text-neutral-500">|</div>
-        <div className="flex-1 truncate font-medium">
-          {image?.filename ?? "loading…"}{" "}
+        <div className="flex-1 min-w-0">
+          <div className="truncate text-base font-semibold text-neutral-100">{image?.filename ?? "loading…"}</div>
           {image && (
-            <span className="text-xs text-neutral-500 ml-2">
+            <div className="text-xs text-neutral-500">
               {image.width}×{image.height} · {(image.bytes / 1024).toFixed(0)}KB · {image.status}
-            </span>
+            </div>
           )}
         </div>
-        <div className="text-xs text-neutral-400">⏱ {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</div>
+        <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-100">
+          ⏱ {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+        </div>
         <div className="flex items-center gap-1">
           <button
             onClick={undo}
             disabled={undoStack.length === 0}
             title={`Undo (⌘Z) — ${undoStack.length} step${undoStack.length === 1 ? "" : "s"} available`}
-            className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:hover:bg-neutral-800"
+            className="rounded-full border border-neutral-700 bg-white px-3 py-1.5 text-xs font-medium text-neutral-300 shadow-sm hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-40 disabled:hover:bg-white"
           >
             ↶ Undo
           </button>
@@ -1159,7 +1245,7 @@ export function WorkviewPage() {
             onClick={redo}
             disabled={redoStack.length === 0}
             title={`Redo (⌘⇧Z) — ${redoStack.length} step${redoStack.length === 1 ? "" : "s"} available`}
-            className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:hover:bg-neutral-800"
+            className="rounded-full border border-neutral-700 bg-white px-3 py-1.5 text-xs font-medium text-neutral-300 shadow-sm hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-40 disabled:hover:bg-white"
           >
             ↷ Redo
           </button>
@@ -1175,30 +1261,46 @@ export function WorkviewPage() {
           onClick={gotoMostUncertain}
           disabled={findingNext}
           title="Jump to the un-annotated image the active model is least sure about"
-          className="text-xs bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 font-medium px-3 py-1 rounded"
+          className="rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-white shadow-sm shadow-emerald-200 hover:bg-emerald-400 disabled:bg-neutral-700"
         >
           {findingNext ? "Finding…" : "Next uncertain ✨"}
         </button>
-        <div className="text-xs text-neutral-400">{idx + 1} / {siblings.length}</div>
+        <div className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-neutral-400 ring-1 ring-neutral-700">
+          {idx + 1} / {siblings.length}
+        </div>
       </div>
 
       <div className="flex-1 flex min-h-0">
         {/* Left toolbar */}
-        <div className="w-14 bg-neutral-900 border-r border-neutral-800 flex flex-col items-center py-3 gap-2">
-          <ToolBtn active={tool === "pan"} onClick={() => setTool("pan")} label="Pan (V)" icon="✋" />
-          <ToolBtn active={tool === "auto"} onClick={() => setTool("auto")} label="Auto-Annotate (A) — click to segment, shift-click +pt, alt-click −pt, drag for box" icon="✨" />
-          <ToolBtn active={tool === "polygon"} onClick={() => setTool("polygon")} label="Polygon (P)" icon="⬡" />
-          <ToolBtn active={tool === "polyline"} onClick={() => setTool("polyline")} label="Polyline (L) — click to add vertices, Enter to commit (open path)" icon="〰" />
-          <ToolBtn active={tool === "bbox"} onClick={() => setTool("bbox")} label="Bounding Box (B)" icon="▭" />
-          <ToolBtn active={tool === "obb"} onClick={() => setTool("obb")} label="Rotated Box (O) — drag for axis-aligned, then rotate via handle (coming soon)" icon="◇" />
-          <ToolBtn active={tool === "brush"} onClick={() => setTool("brush")} label="Brush (R) — paint a mask, shift to erase, [ / ] resize, Enter to commit" icon="🖌" />
-          <ToolBtn active={tool === "keypoint"} onClick={() => setTool("keypoint")} label="Keypoint (K) — pick a keypoints class, then click to drop each keypoint in order; Cmd-click = occluded" icon="⊙" />
-          <div className="h-px w-8 bg-neutral-800 my-1" />
-          <ToolBtn active={tool === "comment"} onClick={() => setTool("comment")} label="Comment (T) — click on image to drop a pin and leave a note for the reviewer" icon="💬" />
+        <div className="w-64 shrink-0 overflow-y-auto border-r border-emerald-100 bg-gradient-to-b from-white to-[#f1fbf3] px-3 py-4 shadow-[8px_0_30px_rgba(20,83,45,0.08)]">
+          <div className="mb-4 rounded-3xl border border-emerald-100 bg-emerald-50/80 p-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">Labeling tools</div>
+            <div className="mt-1 text-lg font-bold text-neutral-100">Pick what you want to do</div>
+            <div className="mt-1 text-xs leading-5 text-neutral-500">Names, shortcuts, and purpose are visible — no guessing icons.</div>
+          </div>
+          <div className="space-y-4">
+            {TOOL_GROUPS.map((group) => (
+              <div key={group.title}>
+                <div className="mb-2 px-2 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">
+                  {group.title}
+                </div>
+                <div className="space-y-2">
+                  {group.tools.map((toolKey) => (
+                    <ToolBtn
+                      key={toolKey}
+                      active={tool === toolKey}
+                      onClick={() => setTool(toolKey)}
+                      info={TOOL_DETAILS[toolKey]}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Canvas */}
-        <div ref={containerRef} className="flex-1 relative bg-neutral-800 overflow-hidden">
+        <div ref={containerRef} className="flex-1 relative overflow-hidden bg-[#101411]">
           {predicting && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-neutral-950 text-xs px-3 py-1 rounded-full font-medium z-10">
               SAM2 predicting…
@@ -1225,6 +1327,23 @@ export function WorkviewPage() {
               ✓ Approved — read-only. Use Reopen to edit.
             </div>
           )}
+
+          <div className="absolute bottom-20 left-4 z-10 max-w-md rounded-2xl border border-emerald-200 bg-white/95 px-4 py-3 text-sm shadow-2xl shadow-black/20 backdrop-blur">
+            <div className="flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-100 text-xl text-emerald-700">
+                {activeTool.icon}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-neutral-100">{activeTool.name}</span>
+                  <kbd className="rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[11px] font-bold text-emerald-700">
+                    {activeTool.shortcut}
+                  </kbd>
+                </div>
+                <div className="text-xs leading-5 text-neutral-500">{activeTool.tip}</div>
+              </div>
+            </div>
+          </div>
 
           <Stage
             ref={stageRef}
@@ -1912,26 +2031,28 @@ export function WorkviewPage() {
         </div>
 
         {/* Right panel */}
-        <aside className="w-72 bg-neutral-900 border-l border-neutral-800 flex flex-col">
-          <div className="p-3 border-b border-neutral-800">
-            <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2">Active class</div>
+        <aside className="w-80 shrink-0 bg-[#f7fff8] border-l border-emerald-100 flex flex-col shadow-[-8px_0_30px_rgba(20,83,45,0.08)]">
+          <div className="p-4 border-b border-emerald-100 bg-white/70">
+            <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700 mb-3">Active class</div>
             {classes.length === 0 ? (
               <Link to={`/projects/${projectId}`} className="text-xs text-emerald-400 hover:underline">
                 ⚠ No classes yet — add one in Project → Classes
               </Link>
             ) : (
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {classes.map((c) => (
                   <button
                     key={c.id}
                     onClick={() => setActiveClassId(c.id)}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left ${
-                      activeClassId === c.id ? "bg-neutral-800 text-neutral-100" : "text-neutral-400 hover:bg-neutral-800/50"
+                    className={`w-full flex items-center gap-3 rounded-2xl border px-3 py-2.5 text-sm text-left transition ${
+                      activeClassId === c.id
+                        ? "border-emerald-300 bg-emerald-50 text-neutral-100 shadow-sm"
+                        : "border-transparent bg-white/70 text-neutral-400 hover:border-emerald-100 hover:bg-white"
                     }`}
                   >
-                    <span className="w-3 h-3 rounded" style={{ background: c.color }} />
+                    <span className="w-4 h-4 rounded-lg shadow-sm ring-2 ring-white" style={{ background: c.color }} />
                     <span className="flex-1 truncate">{c.name}</span>
-                    <span className="text-[10px] text-neutral-500">{c.annotation_count}</span>
+                    <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[10px] font-semibold text-neutral-400">{c.annotation_count}</span>
                   </button>
                 ))}
               </div>
@@ -1942,8 +2063,8 @@ export function WorkviewPage() {
             const props = classPropsCache[selectedAnn.class_id] ?? [];
             const cls = classMap.get(selectedAnn.class_id);
             return (
-              <div className="p-3 border-b border-neutral-800 bg-neutral-900/60">
-                <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2 flex items-center gap-2">
+              <div className="p-4 border-b border-emerald-100 bg-white/75">
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700 mb-3 flex items-center gap-2">
                   <span>Properties</span>
                   <span className="lowercase text-[10px] normal-case text-neutral-600">
                     · {cls?.name ?? "?"}
@@ -1972,14 +2093,16 @@ export function WorkviewPage() {
             );
           })()}
 
-          <div className="flex-1 overflow-y-auto p-3">
-            <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700 mb-3">
               Annotations ({annotations.length})
             </div>
             {annotations.length === 0 ? (
-              <div className="text-xs text-neutral-600">No annotations yet. Click on the image with the ✨ Auto tool.</div>
+              <div className="rounded-2xl border border-dashed border-emerald-200 bg-white/70 p-4 text-sm leading-6 text-neutral-500">
+                No annotations yet. Start with <b>Auto Segment</b> or choose a drawing tool from the left.
+              </div>
             ) : (
-              <ul className="space-y-1">
+              <ul className="space-y-2">
                 {annotations.map((a, i) => {
                   const c = classMap.get(a.class_id);
                   return (
@@ -1988,18 +2111,18 @@ export function WorkviewPage() {
                       onClick={() => selectAnnotation(a)}
                       onMouseEnter={() => setHoverAnnId(a.id)}
                       onMouseLeave={() => setHoverAnnId(null)}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm group cursor-pointer select-none ${
+                      className={`flex items-center gap-3 rounded-2xl border px-3 py-2.5 text-sm group cursor-pointer select-none transition ${
                         selectedAnnId === a.id
-                          ? "bg-emerald-500/15 ring-1 ring-emerald-500/50 text-neutral-100"
+                          ? "border-emerald-300 bg-emerald-50 text-neutral-100 shadow-sm"
                           : hoverAnnId === a.id
-                            ? "bg-neutral-800"
-                            : "hover:bg-neutral-800/50"
+                            ? "border-emerald-100 bg-white"
+                            : "border-transparent bg-white/70 hover:border-emerald-100 hover:bg-white"
                       }`}
                       title="Click to select and highlight this annotation"
                     >
-                      <span className="w-2.5 h-2.5 rounded" style={{ background: c?.color ?? "#888" }} />
+                      <span className="w-4 h-4 rounded-lg shadow-sm ring-2 ring-white" style={{ background: c?.color ?? "#888" }} />
                       <span className="flex-1 truncate">{c?.name ?? "?"} #{i + 1}</span>
-                      <span className="text-[10px] text-neutral-500">{a.geometry_type}</span>
+                      <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[10px] font-semibold text-neutral-500">{a.geometry_type}</span>
                       {a.source === "model" && (
                         <span className="text-[10px] text-emerald-400" title={`SAM2 confidence ${a.confidence}`}>✨</span>
                       )}
@@ -2026,7 +2149,7 @@ export function WorkviewPage() {
             setHoveredCommentId={setHoveredCommentId}
           />
 
-          <div className="p-3 border-t border-neutral-800 text-[11px] text-neutral-500 space-y-1">
+          <div className="p-4 border-t border-emerald-100 bg-white/70 text-[11px] text-neutral-500 space-y-1.5">
             <div><kbd className="kbd">V</kbd> pan · <kbd className="kbd">A</kbd> auto · <kbd className="kbd">P</kbd> polygon · <kbd className="kbd">B</kbd> bbox · <kbd className="kbd">R</kbd> brush · <kbd className="kbd">T</kbd> comment</div>
             <div><kbd className="kbd">Enter</kbd> save · <kbd className="kbd">Esc</kbd> cancel · <kbd className="kbd">←/→</kbd> navigate</div>
             <div><kbd className="kbd">Wheel</kbd> zoom (toward cursor)</div>
@@ -2037,16 +2160,36 @@ export function WorkviewPage() {
   );
 }
 
-function ToolBtn({ active, onClick, label, icon }: { active: boolean; onClick: () => void; label: string; icon: string }) {
+function ToolBtn({ active, onClick, info }: { active: boolean; onClick: () => void; info: ToolInfo }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      title={label}
-      className={`w-10 h-10 rounded grid place-items-center text-lg transition ${
-        active ? "bg-emerald-500 text-neutral-950" : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
+      title={`${info.name} (${info.shortcut}) — ${info.tip}`}
+      className={`group w-full rounded-2xl border p-2.5 text-left transition ${
+        active
+          ? "border-emerald-300 bg-white text-neutral-100 shadow-md shadow-emerald-100"
+          : "border-transparent bg-white/65 text-neutral-400 hover:border-emerald-100 hover:bg-white hover:shadow-sm"
       }`}
     >
-      {icon}
+      <div className="flex items-center gap-3">
+        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-xl transition ${
+          active ? "bg-emerald-500 text-white" : "bg-emerald-50 text-emerald-700 group-hover:bg-emerald-100"
+        }`}>
+          {info.icon}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="truncate text-sm font-bold">{info.name}</span>
+            <kbd className={`ml-auto rounded-md border px-1.5 py-0.5 text-[10px] font-bold ${
+              active ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-neutral-700 bg-neutral-900 text-neutral-500"
+            }`}>
+              {info.shortcut}
+            </kbd>
+          </span>
+          <span className="mt-0.5 block truncate text-xs leading-5 text-neutral-500">{info.description}</span>
+        </span>
+      </div>
     </button>
   );
 }
@@ -2066,7 +2209,7 @@ function ModelPicker({
       value={choice}
       onChange={(e) => onChange(e.target.value)}
       title="Which model to use for auto-annotate"
-      className="text-xs bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-neutral-300"
+      className="rounded-full border border-neutral-700 bg-white px-3 py-2 text-xs font-medium text-neutral-300 shadow-sm outline-none hover:border-emerald-300 focus:border-emerald-500"
     >
       <option value="active">Model: {activeName} (default)</option>
       <option value="base">Model: base SAM2</option>

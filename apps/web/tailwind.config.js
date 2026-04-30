@@ -4,30 +4,29 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Re-map the `neutral-*` scale to an INVERTED slate-blue palette.
-        // bg-neutral-950 (was darkest) -> lightest near-white blue (page bg)
-        // bg-neutral-900 / 800        -> light bluish surfaces (cards, inputs)
-        // text-neutral-100 / 200 / 300 (was light-on-dark) -> dark slate text
-        // muted 400/500 stay muted but cooler
+        // Re-map the `neutral-*` scale to an INVERTED warm-green palette.
+        // bg-neutral-950 (normally darkest) -> soft garden page background.
+        // bg-neutral-900 / 800          -> friendly raised surfaces.
+        // text-neutral-100 / 200 / 300  -> deep readable green-gray text.
         neutral: {
-          50:  "#0b1220", // darkest text
-          100: "#0f172a",
-          200: "#1e293b",
-          300: "#334155",
-          400: "#475569",
-          500: "#64748b", // muted (mid)
-          600: "#94a3b8",
-          700: "#cbd5e1", // borders
-          800: "#e2ebf7", // raised surface (inputs, hover)
-          900: "#eff4ff", // cards / sidebars
-          950: "#f6f9ff", // page background
+          50:  "#07170f",
+          100: "#10251a",
+          200: "#1f2f27",
+          300: "#31483b",
+          400: "#52685b",
+          500: "#728277",
+          600: "#9fb3a6",
+          700: "#cfe0d4",
+          800: "#e8f5eb",
+          900: "#f7fff8",
+          950: "#f1fbf3",
         },
-        // Re-map accent: was emerald-green, now bright sky/indigo blue.
+        // Bright but natural green: primary actions should feel friendly, not technical.
         emerald: {
-          400: "#3b82f6", // hover (blue-500)
-          500: "#2563eb", // primary (blue-600)
-          600: "#1d4ed8",
-          950: "#ffffff", // text-on-accent (was near-black)
+          400: "#22c55e",
+          500: "#16a34a",
+          600: "#15803d",
+          950: "#052e16",
         },
       },
     },
