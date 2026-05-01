@@ -37,6 +37,7 @@ import platform
 import random
 import sys
 import time
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,6 @@ from anvil_ml.training import (  # noqa: E402
     mask_iou,
     sample_point_in_mask,
 )
-
 
 VARIANTS: dict[str, dict[str, str]] = {
     "base_plus": {
@@ -115,10 +115,8 @@ def reset_peak_memory(d: torch.device) -> None:
     if d.type == "cuda":
         torch.cuda.reset_peak_memory_stats(d)
     elif d.type == "mps":
-        try:
+        with suppress(Exception):
             torch.mps.empty_cache()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def load_pair(image_path: Path, mask_path: Path) -> tuple[np.ndarray, np.ndarray]:

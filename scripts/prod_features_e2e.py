@@ -68,7 +68,7 @@ def main() -> None:
                  json={"name": "Car", "parent_id": root["id"], "geometry_type": "polygon"}).json()
     sedan = s.post(f"{API}/api/projects/{pid}/classes",
                    json={"name": "Sedan", "parent_id": car["id"]}).json()
-    print(f"  hierarchy OK (Vehicle > Car > Sedan)")
+    print("  hierarchy OK (Vehicle > Car > Sedan)")
 
     print("[H2] cycle prevention")
     cycle = s.patch(f"{API}/api/projects/{pid}/classes/{root['id']}",
@@ -92,7 +92,7 @@ def main() -> None:
     kp_class = s.post(f"{API}/api/projects/{pid}/classes",
                       json={"name": "Animal", "geometry_type": "keypoints", "keypoint_schema": skel},
                       headers=H).json()
-    print(f"  kp class created with 2 keypoints")
+    print("  kp class created with 2 keypoints")
 
     # ---- Upload a tiny image so we can attach annotations
     from PIL import Image as PILImage

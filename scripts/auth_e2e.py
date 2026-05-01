@@ -136,9 +136,7 @@ def main() -> int:
 
         # Tokens
         lab_tok = c.post("/api/auth/login", json={"email": labeler_email, "password": passwd}).json()["access_token"]
-        rev_tok = c.post("/api/auth/login", json={"email": reviewer_email, "password": passwd}).json()["access_token"]
         lh = {"Authorization": f"Bearer {lab_tok}"}
-        rh = {"Authorization": f"Bearer {rev_tok}"}
 
         print("\n[R3] labeler cannot create project (403)")
         r = c.post("/api/projects", json={"name": "lab-fail"}, headers=lh)
@@ -149,7 +147,6 @@ def main() -> int:
         proj = r.json()
         r = c.post(f"/api/projects/{proj['id']}/datasets",
                    json={"name": "ds"}, headers=ah); r.raise_for_status()
-        ds = r.json()
 
         print("\n[R5] labeler can list datasets; viewer-style read works for all authed")
         r = c.get(f"/api/projects/{proj['id']}/datasets", headers=lh); r.raise_for_status()
