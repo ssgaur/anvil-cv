@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import type { ClassProperty, ClassPropertyType, ClassRow, CompareResult, Dataset, KeypointSchema, ModelVersion, Project } from "../types";
 
 const TABS = ["Data", "Classes", "Models", "Settings"] as const;
@@ -143,6 +144,8 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
   const [parentId, setParentId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ClassRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -167,9 +170,19 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
   }
 
   async function del(c: ClassRow) {
-    if (!confirm(`Delete class "${c.name}"? Existing annotations will be removed.`)) return;
-    try { await api.deleteClass(projectId, c.id); onReload(); }
+    setDeleteTarget(c);
+  }
+
+  async function confirmDeleteClass() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.deleteClass(projectId, deleteTarget.id);
+      setDeleteTarget(null);
+      onReload();
+    }
     catch (err) { toast.error(err, "Delete failed"); }
+    finally { setDeleting(false); }
   }
 
   // Build hierarchical render order: roots first, then children indented.
@@ -195,8 +208,9 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
   }
 
   return (
-    <div className="max-w-3xl">
-      <form onSubmit={create} className="flex gap-2 mb-6 items-center flex-wrap">
+    <>
+      <div className="max-w-3xl">
+        <form onSubmit={create} className="flex gap-2 mb-6 items-center flex-wrap">
         <input
           className="flex-1 min-w-[200px] bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:border-emerald-500 outline-none"
           placeholder="Class name (e.g. cucumber, sunkenArea)"
@@ -231,28 +245,39 @@ function ClassesTab({ projectId, classes, onReload }: { projectId: string; class
         <button disabled={busy || !name.trim()} className="bg-emerald-500 hover:bg-emerald-400 disabled:bg-neutral-700 text-neutral-950 px-4 py-2 rounded text-sm font-medium">
           Add class
         </button>
-      </form>
+        </form>
 
-      {classes.length === 0 ? (
-        <div className="text-neutral-500 text-sm">No classes yet. Add one before annotating.</div>
-      ) : (
-        <ul className="space-y-2">
-          {ordered.map(({ cls: c, depth }) => (
-            <div key={c.id} style={{ marginLeft: depth * 18 }}>
-              <ClassCard
-                projectId={projectId}
-                cls={c}
-                allClasses={classes}
-                expanded={editingId === c.id}
-                onExpand={() => setEditingId(editingId === c.id ? null : c.id)}
-                onDelete={() => del(c)}
-                onChanged={onReload}
-              />
-            </div>
-          ))}
-        </ul>
-      )}
-    </div>
+        {classes.length === 0 ? (
+          <div className="text-neutral-500 text-sm">No classes yet. Add one before annotating.</div>
+        ) : (
+          <ul className="space-y-2">
+            {ordered.map(({ cls: c, depth }) => (
+              <div key={c.id} style={{ marginLeft: depth * 18 }}>
+                <ClassCard
+                  projectId={projectId}
+                  cls={c}
+                  allClasses={classes}
+                  expanded={editingId === c.id}
+                  onExpand={() => setEditingId(editingId === c.id ? null : c.id)}
+                  onDelete={() => del(c)}
+                  onChanged={onReload}
+                />
+              </div>
+            ))}
+          </ul>
+        )}
+      </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete class?"
+        description={`Delete class "${deleteTarget?.name ?? ""}"? Existing annotations using this class will be removed.`}
+        confirmLabel="Delete class"
+        tone="danger"
+        busy={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDeleteClass}
+      />
+    </>
   );
 }
 
@@ -528,6 +553,8 @@ function ClassPropertyRow({
   const [name, setName] = useState(property.name);
   const [optsText, setOptsText] = useState(property.options.join(", "));
   const [required, setRequired] = useState(property.required);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function save() {
     const options = (property.type === "single" || property.type === "multi")
@@ -542,9 +569,16 @@ function ClassPropertyRow({
   }
 
   async function del() {
-    if (!confirm(`Delete property "${property.name}"? Existing values on annotations will be cleared.`)) return;
-    await api.deleteClassProperty(projectId, classId, property.id);
-    onChanged();
+    setDeleting(true);
+    try {
+      await api.deleteClassProperty(projectId, classId, property.id);
+      setDeleteOpen(false);
+      onChanged();
+    } catch (err) {
+      toast.error(err, "Delete failed");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   if (editing) {
@@ -578,14 +612,24 @@ function ClassPropertyRow({
 
   return (
     <li className="px-3 py-2 flex items-center gap-3 group">
-      <span className="font-medium text-sm">{property.name}</span>
-      <span className="text-xs text-neutral-500">{property.type}</span>
-      {property.required && <span className="text-xs text-amber-400">required</span>}
-      {property.options.length > 0 && (
-        <span className="text-xs text-neutral-500 truncate">{property.options.join(" · ")}</span>
-      )}
-      <button onClick={() => setEditing(true)} className="ml-auto text-neutral-500 hover:text-neutral-300 text-xs opacity-0 group-hover:opacity-100">edit</button>
-      <button onClick={del} className="text-neutral-600 hover:text-rose-400 text-xs opacity-0 group-hover:opacity-100">✕</button>
+        <span className="font-medium text-sm">{property.name}</span>
+        <span className="text-xs text-neutral-500">{property.type}</span>
+        {property.required && <span className="text-xs text-amber-400">required</span>}
+        {property.options.length > 0 && (
+          <span className="text-xs text-neutral-500 truncate">{property.options.join(" · ")}</span>
+        )}
+        <button onClick={() => setEditing(true)} className="ml-auto text-neutral-500 hover:text-neutral-300 text-xs opacity-0 group-hover:opacity-100">edit</button>
+        <button onClick={() => setDeleteOpen(true)} className="text-neutral-600 hover:text-rose-400 text-xs opacity-0 group-hover:opacity-100">✕</button>
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Delete property?"
+        description={`Delete property "${property.name}"? Existing values on annotations will be cleared.`}
+        confirmLabel="Delete property"
+        tone="danger"
+        busy={deleting}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={del}
+      />
     </li>
   );
 }
@@ -601,6 +645,8 @@ function ModelsTab({
   const [rank, setRank] = useState(8);
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ModelVersion | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function load() {
     try { setVersions(await api.listModelVersions(projectId)); }
@@ -638,6 +684,20 @@ function ModelsTab({
     await api.setActiveModel(projectId, v?.id ?? null);
     await onReload();
     await load();
+  }
+
+  async function confirmDeleteModel() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.deleteModelVersion(deleteTarget.id);
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      toast.error(e, "Delete failed");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -771,11 +831,7 @@ function ModelsTab({
                       )}
                       {v.status !== "training" && !isActive && (
                         <button
-                          onClick={async () => {
-                            if (!window.confirm(`Delete model version "${v.name}"?`)) return;
-                            try { await api.deleteModelVersion(v.id); await load(); }
-                            catch (e) { toast.error(e, "Delete failed"); }
-                          }}
+                          onClick={() => setDeleteTarget(v)}
                           className="text-xs text-neutral-600 hover:text-rose-400"
                           title="Delete this model version (and its adapter file)"
                         >Delete</button>
@@ -788,6 +844,16 @@ function ModelsTab({
           </div>
         </>
       )}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete model version?"
+        description={`Delete model version "${deleteTarget?.name ?? ""}" and its adapter file?`}
+        confirmLabel="Delete model"
+        tone="danger"
+        busy={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDeleteModel}
+      />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, downloadCocoExport, fileUrl, type ImageListOpts, type ImageSort } from "../lib/api";
 import { toast } from "../lib/toast";
 import { RejectReasonDialog } from "../components/RejectReasonDialog";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import type { ClassRow, Dataset, ImageRow, ReviewStatus } from "../types";
 
 const SORT_LABELS: Record<ImageSort, string> = {
@@ -13,6 +14,10 @@ const SORT_LABELS: Record<ImageSort, string> = {
   fewest_labels: "Fewest labels",
   uncertainty: "Highest uncertainty",
 };
+
+type BulkConfirm =
+  | { kind: "delete-images" }
+  | { kind: "clear-class"; classId: string; className: string };
 
 export function DatasetDetailPage() {
   const { projectId = "", datasetId = "" } = useParams();
@@ -32,6 +37,8 @@ export function DatasetDetailPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [bulkReviewBusy, setBulkReviewBusy] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<BulkConfirm | null>(null);
+  const [bulkConfirmBusy, setBulkConfirmBusy] = useState(false);
 
   // Selection state for bulk ops (persists across pagination loadMore).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -198,7 +205,10 @@ export function DatasetDetailPage() {
 
   async function bulkDelete() {
     if (selected.size === 0) return;
-    if (!confirm(`Delete ${selected.size} image(s)? This cannot be undone.`)) return;
+    setBulkConfirm({ kind: "delete-images" });
+  }
+
+  async function confirmBulkDeleteImages() {
     try {
       const r = await api.bulkDeleteImages(projectId, datasetId, [...selected]);
       const okN = r.ok.length;
@@ -252,20 +262,38 @@ export function DatasetDetailPage() {
   async function bulkDeleteAnnotationsByClass(classId: string) {
     if (selected.size === 0 || !classId) return;
     const cls = classes.find((c) => c.id === classId);
-    if (!confirm(`Delete all "${cls?.name ?? classId}" annotations from ${selected.size} image(s)?`)) return;
+    setBulkConfirm({ kind: "clear-class", classId, className: cls?.name ?? classId });
+  }
+
+  async function confirmBulkDeleteAnnotationsByClass(action: Extract<BulkConfirm, { kind: "clear-class" }>) {
     try {
       const r = await api.bulkDeleteAnnotationsByClass(projectId, datasetId, {
-        class_id: classId, image_ids: [...selected],
+        class_id: action.classId, image_ids: [...selected],
       });
       const okN = r.ok.length;
       if (r.failed.length > 0) {
         toast.warn(`Cleared on ${okN} of ${selected.size}`, `${r.failed.length} failed/skipped`);
       } else {
-        toast.success(`Cleared "${cls?.name ?? classId}" on ${okN} image(s)`);
+        toast.success(`Cleared "${action.className}" on ${okN} image(s)`);
       }
       setSelected(new Set());
       await reload();
     } catch (e) { toast.error(e, "Bulk class delete failed"); }
+  }
+
+  async function confirmBulkAction() {
+    if (!bulkConfirm) return;
+    setBulkConfirmBusy(true);
+    try {
+      if (bulkConfirm.kind === "delete-images") {
+        await confirmBulkDeleteImages();
+      } else {
+        await confirmBulkDeleteAnnotationsByClass(bulkConfirm);
+      }
+      setBulkConfirm(null);
+    } finally {
+      setBulkConfirmBusy(false);
+    }
   }
 
   if (!dataset) return <div className="p-8 text-neutral-500">loading…</div>;
@@ -548,6 +576,20 @@ export function DatasetDetailPage() {
         busy={bulkReviewBusy}
         onCancel={() => setBulkRejectOpen(false)}
         onConfirm={(reason) => bulkReview("reject", reason)}
+      />
+      <ConfirmDialog
+        open={bulkConfirm !== null}
+        title={bulkConfirm?.kind === "clear-class" ? "Clear class annotations?" : "Delete selected images?"}
+        description={
+          bulkConfirm?.kind === "clear-class"
+            ? `Delete all "${bulkConfirm.className}" annotations from ${selected.size} selected image${selected.size === 1 ? "" : "s"}? Locked images will be skipped.`
+            : `Delete ${selected.size} selected image${selected.size === 1 ? "" : "s"}? This cannot be undone.`
+        }
+        confirmLabel={bulkConfirm?.kind === "clear-class" ? "Clear annotations" : "Delete images"}
+        tone="danger"
+        busy={bulkConfirmBusy}
+        onCancel={() => setBulkConfirm(null)}
+        onConfirm={confirmBulkAction}
       />
     </>
   );

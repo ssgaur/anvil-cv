@@ -8,6 +8,7 @@ import { toast } from "../lib/toast";
 import { useAuth } from "../store/auth";
 import { isLabeler, isReviewer } from "../lib/roles";
 import { RejectReasonDialog } from "../components/RejectReasonDialog";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import type { Annotation, ClassProperty, ClassRow, CommentRow, ImageRow, ModelVersion } from "../types";
 
 type Tool = "pan" | "auto" | "polygon" | "polyline" | "bbox" | "obb" | "brush" | "keypoint" | "comment";
@@ -2572,6 +2573,8 @@ function CommentPanel({
 }) {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CommentRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function refresh() { onChange(await api.listComments(imageId)); }
 
@@ -2591,72 +2594,94 @@ function CommentPanel({
   }
 
   async function del(c: CommentRow) {
-    if (!window.confirm("Delete this comment?")) return;
-    try { await api.deleteComment(c.id); await refresh(); }
+    setDeleteTarget(c);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.deleteComment(deleteTarget.id);
+      setDeleteTarget(null);
+      await refresh();
+    }
     catch (e) { toast.error(e); }
+    finally { setDeleting(false); }
   }
 
   const open = comments.filter((c) => !c.resolved);
   const resolved = comments.filter((c) => c.resolved);
 
   return (
-    <div className="border-b border-neutral-800 p-3 max-h-72 overflow-y-auto">
-      <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2 flex items-center justify-between">
-        <span>Comments</span>
-        <span className="text-[10px] normal-case tracking-normal text-neutral-600">
-          {open.length} open · {resolved.length} resolved
-        </span>
-      </div>
-      <div className="flex gap-1 mb-2">
-        <input
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") addGeneral(); }}
-          placeholder="Add a note (or use 💬 tool to pin)…"
-          className="flex-1 bg-neutral-800 px-2 py-1 rounded text-xs outline-none focus:ring-1 focus:ring-emerald-500"
-          disabled={busy}
-        />
-        <button
-          onClick={addGeneral}
-          disabled={busy || !body.trim()}
-          className="text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white px-2 rounded"
-        >+</button>
-      </div>
-      {comments.length === 0 ? (
-        <div className="text-[11px] text-neutral-600 italic">No comments yet.</div>
-      ) : (
-        <ul className="space-y-1.5">
-          {comments.map((c) => (
-            <li
-              key={c.id}
-              onMouseEnter={() => setHoveredCommentId(c.id)}
-              onMouseLeave={() => setHoveredCommentId(hoveredCommentId === c.id ? null : hoveredCommentId)}
-              className={`group rounded px-2 py-1.5 text-xs ${c.resolved ? "bg-neutral-900 text-neutral-500" : "bg-neutral-800 text-neutral-200"} ${hoveredCommentId === c.id ? "ring-1 ring-pink-500" : ""}`}
-            >
-              <div className="flex items-start gap-1">
-                <span className="text-[10px] mt-0.5">{c.x != null ? "📍" : "💬"}</span>
-                <div className="flex-1 min-w-0">
-                  <div className={c.resolved ? "line-through" : ""}>{c.body}</div>
-                  <div className="text-[10px] text-neutral-600 mt-0.5">
-                    {c.author_name} · {new Date(c.created_at).toLocaleString()}
-                    {c.x != null && <> · ({c.x},{c.y})</>}
+    <>
+      <div className="border-b border-neutral-800 p-3 max-h-72 overflow-y-auto">
+        <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2 flex items-center justify-between">
+          <span>Comments</span>
+          <span className="text-[10px] normal-case tracking-normal text-neutral-600">
+            {open.length} open · {resolved.length} resolved
+          </span>
+        </div>
+        <div className="flex gap-1 mb-2">
+          <input
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addGeneral(); }}
+            placeholder="Add a note (or use 💬 tool to pin)…"
+            className="flex-1 bg-neutral-800 px-2 py-1 rounded text-xs outline-none focus:ring-1 focus:ring-emerald-500"
+            disabled={busy}
+          />
+          <button
+            onClick={addGeneral}
+            disabled={busy || !body.trim()}
+            className="text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white px-2 rounded"
+          >+</button>
+        </div>
+        {comments.length === 0 ? (
+          <div className="text-[11px] text-neutral-600 italic">No comments yet.</div>
+        ) : (
+          <ul className="space-y-1.5">
+            {comments.map((c) => (
+              <li
+                key={c.id}
+                onMouseEnter={() => setHoveredCommentId(c.id)}
+                onMouseLeave={() => setHoveredCommentId(hoveredCommentId === c.id ? null : hoveredCommentId)}
+                className={`group rounded px-2 py-1.5 text-xs ${c.resolved ? "bg-neutral-900 text-neutral-500" : "bg-neutral-800 text-neutral-200"} ${hoveredCommentId === c.id ? "ring-1 ring-pink-500" : ""}`}
+              >
+                <div className="flex items-start gap-1">
+                  <span className="text-[10px] mt-0.5">{c.x != null ? "📍" : "💬"}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className={c.resolved ? "line-through" : ""}>{c.body}</div>
+                    <div className="text-[10px] text-neutral-600 mt-0.5">
+                      {c.author_name} · {new Date(c.created_at).toLocaleString()}
+                      {c.x != null && <> · ({c.x},{c.y})</>}
+                    </div>
                   </div>
+                  <button
+                    onClick={() => toggleResolved(c)}
+                    title={c.resolved ? "Reopen" : "Mark resolved"}
+                    className="text-neutral-500 hover:text-emerald-400 opacity-0 group-hover:opacity-100"
+                  >{c.resolved ? "↺" : "✓"}</button>
+                  <button
+                    onClick={() => del(c)}
+                    title="Delete"
+                    className="text-neutral-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+                  >✕</button>
                 </div>
-                <button
-                  onClick={() => toggleResolved(c)}
-                  title={c.resolved ? "Reopen" : "Mark resolved"}
-                  className="text-neutral-500 hover:text-emerald-400 opacity-0 group-hover:opacity-100"
-                >{c.resolved ? "↺" : "✓"}</button>
-                <button
-                  onClick={() => del(c)}
-                  title="Delete"
-                  className="text-neutral-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"
-                >✕</button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete comment?"
+        description="Delete this comment? This cannot be undone."
+        confirmLabel="Delete comment"
+        tone="danger"
+        busy={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
+    </>
   );
 }
