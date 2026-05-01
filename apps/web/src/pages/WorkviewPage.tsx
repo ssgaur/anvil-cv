@@ -78,6 +78,7 @@ export function WorkviewPage() {
   const [maskVersion, setMaskVersion] = useState(0); // bump to force Konva re-render
   const [hasBrushStrokes, setHasBrushStrokes] = useState(false);
   const [brushSize, setBrushSize] = useState(24);    // image-space radius (px)
+  const [brushPreview, setBrushPreview] = useState<{ pt: [number, number]; erase: boolean } | null>(null);
   const brushingRef = useRef<{ erase: boolean; lastPt: [number, number] | null } | null>(null);
 
   function ensureMaskCanvas(): HTMLCanvasElement | null {
@@ -153,6 +154,19 @@ export function WorkviewPage() {
     ctx.fill();
     setHasBrushStrokes(true);
     setMaskVersion((v) => v + 1);
+  }
+
+  function updateBrushPreview(pos: { x: number; y: number } | null, erase: boolean) {
+    if (!image || !pos) {
+      setBrushPreview(null);
+      return;
+    }
+    const pt = imagePoint(pos.x, pos.y);
+    if (pt[0] < 0 || pt[1] < 0 || pt[0] > image.width || pt[1] > image.height) {
+      setBrushPreview(null);
+      return;
+    }
+    setBrushPreview({ pt, erase });
   }
 
   async function commitBrush() {
@@ -303,7 +317,8 @@ export function WorkviewPage() {
   const [elapsed, setElapsed] = useState(0);
   // Hold-space-to-pan (overrides any active tool while held)
   const [spacePan, setSpacePan] = useState(false);
-  const isPanning = tool === "pan" || spacePan;
+  const isEditingAnnotation = selectedAnnId !== null;
+  const isPanning = spacePan || (tool === "pan" && !isEditingAnnotation);
   // Cheatsheet popover
   const [showHelp, setShowHelp] = useState(false);
 
@@ -331,10 +346,15 @@ export function WorkviewPage() {
     setPendingPin(null); setPendingBody("");
     // Drop the brush canvas so the next image starts fresh.
     maskCanvasRef.current = null;
+    setBrushPreview(null);
     setHasBrushStrokes(false);
     setMaskVersion((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageId]);
+
+  useEffect(() => {
+    if (tool !== "brush") setBrushPreview(null);
+  }, [tool]);
 
   // Sibling images (for nav strip)
   useEffect(() => {
@@ -464,22 +484,19 @@ export function WorkviewPage() {
       if (e.key === "0") { zoomTo100(); return; }
       if (e.key === "?" || (e.key === "/" && e.shiftKey)) { e.preventDefault(); setShowHelp((v) => !v); return; }
       if (key === "h") { setShowHelp((v) => !v); return; }
-      if (key === "v") setTool("pan");
-      else if (key === "a") setTool("auto");
-      else if (key === "p") setTool("polygon");
-      else if (key === "l") setTool("polyline");
-      else if (key === "b") setTool("bbox");
-      else if (key === "o") setTool("obb");
-      else if (key === "r") setTool("brush");
-      else if (key === "k") setTool("keypoint");
-      else if (key === "t") setTool("comment");
+      if (key === "v") activateTool("pan");
+      else if (key === "a") activateTool("auto");
+      else if (key === "p") activateTool("polygon");
+      else if (key === "l") activateTool("polyline");
+      else if (key === "b") activateTool("bbox");
+      else if (key === "o") activateTool("obb");
+      else if (key === "r") activateTool("brush");
+      else if (key === "k") activateTool("keypoint");
+      else if (key === "t") activateTool("comment");
       else if (e.key === "Escape") {
         if (showHelp) { setShowHelp(false); return; }
-        setPolyPoints([]); setPolylinePoints([]); setBboxStart(null); setBboxEnd(null);
-        setKpDrops([]);
-        clearPrompts();
+        clearCreationState();
         setSelectedAnnId(null); clearEditBuffers();
-        if (tool === "brush") clearMask();
       }
       else if (e.key === "Enter" && tool === "polygon" && polyPoints.length >= 3) commitPolygon();
       else if (e.key === "Enter" && tool === "polyline" && polylinePoints.length >= 2) commitPolyline();
@@ -511,7 +528,7 @@ export function WorkviewPage() {
       window.removeEventListener("blur", blur);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, polyPoints, polylinePoints, activeClassId, image, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp, classes]);
+  }, [tool, polyPoints, polylinePoints, activeClassId, image, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp, classes, isEditingAnnotation]);
 
   // Helpers
   function imagePoint(stageX: number, stageY: number): [number, number] {
@@ -597,12 +614,40 @@ export function WorkviewPage() {
     wasDragRef.current = false;
   }
 
+  function clearCreationState() {
+    setPolyPoints([]);
+    setPolylinePoints([]);
+    setKpDrops([]);
+    setBboxStart(null);
+    setBboxEnd(null);
+    setPendingPin(null);
+    setPendingBody("");
+    brushingRef.current = null;
+    setBrushPreview(null);
+    clearPrompts();
+    clearMask();
+  }
+
+  function activateTool(next: Tool) {
+    if (next !== tool || isEditingAnnotation) {
+      clearCreationState();
+    }
+    setSelectedAnnId(null);
+    clearEditBuffers();
+    setTool(next);
+  }
+
   // Click
   async function onStageClick(e: Konva.KonvaEventObject<MouseEvent>) {
     // Don't treat pan-clicks as tool-clicks
     if (isPanning || e.evt.button === 1) return;
     // Suppress click that came from a drag (auto box / vertex edit)
     if (wasDragRef.current) { wasDragRef.current = false; return; }
+    if (isEditingAnnotation) {
+      setSelectedAnnId(null);
+      clearEditBuffers();
+      return;
+    }
     const stage = stageRef.current; if (!stage) return;
     const pos = stage.getPointerPosition(); if (!pos) return;
     const [ix, iy] = imagePoint(pos.x, pos.y);
@@ -656,11 +701,13 @@ export function WorkviewPage() {
     // Pan modes (hold-space, pan tool, middle-mouse) bypass tool handlers
     // — Konva's own draggable={isPanning || middle} handles the drag.
     if (isPanning || e.evt.button === 1) return;
+    if (isEditingAnnotation) return;
     if (tool === "brush") {
       const stage = stageRef.current; if (!stage) return;
       const p = stage.getPointerPosition(); if (!p) return;
       const pt = imagePoint(p.x, p.y);
       const erase = e.evt.shiftKey || e.evt.altKey;
+      updateBrushPreview(p, erase);
       brushingRef.current = { erase, lastPt: pt };
       paintStroke(null, pt, erase);
       return;
@@ -680,9 +727,14 @@ export function WorkviewPage() {
       setAutoBoxPreview(null);
     }
   }
-  function onMouseMove() {
+  function onMouseMove(e: Konva.KonvaEventObject<MouseEvent>) {
     const stage = stageRef.current; if (!stage) return;
     const p = stage.getPointerPosition(); if (!p) return;
+    if (isEditingAnnotation) return;
+    if (tool === "brush") {
+      const erase = Boolean(brushingRef.current?.erase || e.evt.shiftKey || e.evt.altKey);
+      updateBrushPreview(p, erase);
+    }
     if (tool === "brush" && brushingRef.current) {
       const pt = imagePoint(p.x, p.y);
       const { erase, lastPt } = brushingRef.current;
@@ -705,6 +757,7 @@ export function WorkviewPage() {
     }
   }
   async function onMouseUp() {
+    if (isEditingAnnotation) return;
     if (tool === "brush") {
       brushingRef.current = null;
       return;
@@ -733,6 +786,9 @@ export function WorkviewPage() {
             });
         setAnnotations((arr) => [...arr, a]);
         pushOp({ kind: "create", ann: a });
+        if (isObb) {
+          selectAnnotation(a);
+        }
       } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
       return;
     }
@@ -827,6 +883,8 @@ export function WorkviewPage() {
 
   // ---- Polygon vertex editing ----
   function selectAnnotation(a: Annotation) {
+    clearCreationState();
+    setTool("pan");
     setSelectedAnnId(a.id);
     clearEditBuffers();
     if (a.geometry_type === "polygon" && a.geometry.points) {
@@ -1128,8 +1186,10 @@ export function WorkviewPage() {
   const activeClass = activeClassId ? classMap.get(activeClassId) : null;
   const canvasCursor = isPanning
     ? "grab"
+    : isEditingAnnotation
+      ? "default"
     : tool === "brush"
-        ? "none"
+        ? "crosshair"
         : tool === "comment"
           ? "copy"
           : "crosshair";
@@ -1192,16 +1252,16 @@ export function WorkviewPage() {
       <div className="flex-1 flex min-h-0">
         {/* Left toolbar */}
         <div className="w-14 bg-neutral-900 border-r border-neutral-800 flex flex-col items-center py-3 gap-2">
-          <ToolBtn active={tool === "pan"} onClick={() => setTool("pan")} label="Pan (V)" icon="✋" />
-          <ToolBtn active={tool === "auto"} onClick={() => setTool("auto")} label="Auto-Annotate (A) — click to segment, shift-click +pt, alt-click −pt, drag for box" icon="✨" />
-          <ToolBtn active={tool === "polygon"} onClick={() => setTool("polygon")} label="Polygon (P)" icon="⬡" />
-          <ToolBtn active={tool === "polyline"} onClick={() => setTool("polyline")} label="Polyline (L) — click to add vertices, Enter to commit (open path)" icon="〰" />
-          <ToolBtn active={tool === "bbox"} onClick={() => setTool("bbox")} label="Bounding Box (B)" icon="▭" />
-          <ToolBtn active={tool === "obb"} onClick={() => setTool("obb")} label="Rotated Box (O) — drag for axis-aligned, then rotate via handle (coming soon)" icon="◇" />
-          <ToolBtn active={tool === "brush"} onClick={() => setTool("brush")} label="Brush (R) — paint a mask, shift to erase, [ / ] resize, Enter to commit" icon="🖌" />
-          <ToolBtn active={tool === "keypoint"} onClick={() => setTool("keypoint")} label="Keypoint (K) — pick a keypoints class, then click to drop each keypoint in order; Cmd-click = occluded" icon="⊙" />
+          <ToolBtn active={!isEditingAnnotation && tool === "pan"} onClick={() => activateTool("pan")} label="Pan (V)" icon="✋" />
+          <ToolBtn active={!isEditingAnnotation && tool === "auto"} onClick={() => activateTool("auto")} label="Auto-Annotate (A) — click to segment, shift-click +pt, alt-click −pt, drag for box" icon="✨" />
+          <ToolBtn active={!isEditingAnnotation && tool === "polygon"} onClick={() => activateTool("polygon")} label="Polygon (P)" icon="⬡" />
+          <ToolBtn active={!isEditingAnnotation && tool === "polyline"} onClick={() => activateTool("polyline")} label="Polyline (L) — click to add vertices, Enter to commit (open path)" icon="〰" />
+          <ToolBtn active={!isEditingAnnotation && tool === "bbox"} onClick={() => activateTool("bbox")} label="Bounding Box (B)" icon="▭" />
+          <ToolBtn active={!isEditingAnnotation && tool === "obb"} onClick={() => activateTool("obb")} label="Rotated Box (O) — drag to place, then use the orange handle to rotate" icon="◇" />
+          <ToolBtn active={!isEditingAnnotation && tool === "brush"} onClick={() => activateTool("brush")} label="Brush (R) — paint a mask, shift to erase, [ / ] resize, Enter to commit" icon="🖌" />
+          <ToolBtn active={!isEditingAnnotation && tool === "keypoint"} onClick={() => activateTool("keypoint")} label="Keypoint (K) — pick a keypoints class, then click to drop each keypoint in order; Cmd-click = occluded" icon="⊙" />
           <div className="h-px w-8 bg-neutral-800 my-1" />
-          <ToolBtn active={tool === "comment"} onClick={() => setTool("comment")} label="Comment (T) — click on image to drop a pin and leave a note for the reviewer" icon="💬" />
+          <ToolBtn active={!isEditingAnnotation && tool === "comment"} onClick={() => activateTool("comment")} label="Comment (T) — click on image to drop a pin and leave a note for the reviewer" icon="💬" />
         </div>
 
         {/* Canvas */}
@@ -1242,6 +1302,7 @@ export function WorkviewPage() {
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
+            onMouseLeave={() => setBrushPreview(null)}
             draggable={isPanning}
             onDragEnd={(e) => {
               if (isPanning) setView({ ...view, x: e.target.x(), y: e.target.y() });
@@ -1262,7 +1323,7 @@ export function WorkviewPage() {
             </Layer>
 
             {/* Brush mask overlay (semi-transparent) */}
-            {tool === "brush" && image && maskCanvasRef.current && (
+            {!isEditingAnnotation && tool === "brush" && image && maskCanvasRef.current && (
               <Layer listening={false}>
                 <KImage
                   image={maskCanvasRef.current}
@@ -1278,7 +1339,12 @@ export function WorkviewPage() {
             )}
 
             {/* Existing annotations */}
-            <Layer listening>
+            <Layer
+              listening
+              onMouseDown={(ev) => { ev.cancelBubble = true; }}
+              onMouseUp={(ev) => { ev.cancelBubble = true; }}
+              onClick={(ev) => { ev.cancelBubble = true; }}
+            >
               {annotations.map((a) => {
                 const cls = classMap.get(a.class_id);
                 const color = cls?.color ?? "#22c55e";
@@ -1689,12 +1755,26 @@ export function WorkviewPage() {
                 />
               )}
               {polyPoints.length > 0 && activeClass && (
-                <Line
-                  points={polyPoints.flat()}
-                  stroke={activeClass.color}
-                  strokeWidth={2 / view.scale}
-                  closed={false}
-                />
+                <>
+                  <Line
+                    points={polyPoints.flat()}
+                    stroke={activeClass.color}
+                    strokeWidth={2.5 / view.scale}
+                    closed={polyPoints.length >= 3}
+                    fill={polyPoints.length >= 3 ? activeClass.color + "22" : undefined}
+                    lineCap="round"
+                    lineJoin="round"
+                  />
+                  {polyPoints.map(([px, py], i) => (
+                    <Circle
+                      key={`pg-${i}`}
+                      x={px} y={py} radius={3.5 / view.scale}
+                      fill={activeClass.color}
+                      stroke="#ffffff"
+                      strokeWidth={1 / view.scale}
+                    />
+                  ))}
+                </>
               )}
               {polylinePoints.length > 0 && activeClass && (
                 <>
@@ -1732,17 +1812,47 @@ export function WorkviewPage() {
                   ))}
                 </>
               )}
-              {bboxStart && bboxEnd && activeClass && (
-                <Rect
-                  x={Math.min(bboxStart[0], bboxEnd[0])}
-                  y={Math.min(bboxStart[1], bboxEnd[1])}
-                  width={Math.abs(bboxEnd[0] - bboxStart[0])}
-                  height={Math.abs(bboxEnd[1] - bboxStart[1])}
-                  stroke={activeClass.color}
-                  strokeWidth={2 / view.scale}
-                  dash={[6 / view.scale, 4 / view.scale]}
-                />
-              )}
+              {bboxStart && bboxEnd && activeClass && (() => {
+                const x = Math.min(bboxStart[0], bboxEnd[0]);
+                const y = Math.min(bboxStart[1], bboxEnd[1]);
+                const w = Math.abs(bboxEnd[0] - bboxStart[0]);
+                const h = Math.abs(bboxEnd[1] - bboxStart[1]);
+                const isObbPreview = tool === "obb";
+                const rotX = x + w / 2;
+                const rotY = y - 28 / view.scale;
+                return (
+                  <>
+                    <Rect
+                      x={x}
+                      y={y}
+                      width={w}
+                      height={h}
+                      stroke={isObbPreview ? "#f59e0b" : activeClass.color}
+                      fill={isObbPreview ? "#f59e0b22" : undefined}
+                      strokeWidth={2 / view.scale}
+                      dash={[6 / view.scale, 4 / view.scale]}
+                    />
+                    {isObbPreview && (
+                      <>
+                        <Line
+                          points={[x + w / 2, y, rotX, rotY]}
+                          stroke="#f59e0b"
+                          strokeWidth={1.5 / view.scale}
+                          dash={[4 / view.scale, 3 / view.scale]}
+                        />
+                        <Circle
+                          x={rotX}
+                          y={rotY}
+                          radius={6 / view.scale}
+                          fill="#f59e0b"
+                          stroke="#ffffff"
+                          strokeWidth={1.5 / view.scale}
+                        />
+                      </>
+                    )}
+                  </>
+                );
+              })()}
               {/* Comment pins (existing) */}
               {comments.filter((c) => c.x != null && c.y != null).map((c) => {
                 const isHovered = hoveredCommentId === c.id;
@@ -1772,11 +1882,39 @@ export function WorkviewPage() {
                   strokeWidth={2 / view.scale}
                 />
               )}
+              {!isEditingAnnotation && tool === "brush" && brushPreview && (
+                <>
+                  <Circle
+                    x={brushPreview.pt[0]}
+                    y={brushPreview.pt[1]}
+                    radius={brushSize}
+                    fill={(brushPreview.erase ? "#ef4444" : activeClass?.color ?? "#22c55e") + "22"}
+                    stroke="#0a0a0a"
+                    strokeWidth={3 / view.scale}
+                    opacity={0.95}
+                  />
+                  <Circle
+                    x={brushPreview.pt[0]}
+                    y={brushPreview.pt[1]}
+                    radius={brushSize}
+                    stroke={brushPreview.erase ? "#ef4444" : activeClass?.color ?? "#22c55e"}
+                    strokeWidth={2 / view.scale}
+                  />
+                  <Circle
+                    x={brushPreview.pt[0]}
+                    y={brushPreview.pt[1]}
+                    radius={2.5 / view.scale}
+                    fill="#ffffff"
+                    stroke="#0a0a0a"
+                    strokeWidth={1 / view.scale}
+                  />
+                </>
+              )}
             </Layer>
           </Stage>
 
           {/* Pending comment composer */}
-          {pendingPin && (
+          {!isEditingAnnotation && pendingPin && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg p-2 flex gap-2 items-center text-sm shadow-xl z-10">
               <span className="text-amber-400 px-2 text-xs">📍 ({pendingPin.x},{pendingPin.y})</span>
               <input
@@ -1805,7 +1943,7 @@ export function WorkviewPage() {
           )}
 
           {/* Pending action bar */}
-          {pending && (
+          {!isEditingAnnotation && pending && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg p-2 flex gap-2 items-center text-sm shadow-xl z-10">
               <span className="text-emerald-400 px-2">SAM2 score: {pending.score.toFixed(3)}</span>
               <button onClick={commitPending} className="bg-emerald-500 text-neutral-950 px-3 py-1 rounded font-medium hover:bg-emerald-400">
@@ -1816,18 +1954,29 @@ export function WorkviewPage() {
               </button>
             </div>
           )}
-          {tool === "polygon" && polyPoints.length >= 3 && (
+          {!isEditingAnnotation && tool === "polygon" && polyPoints.length > 0 && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
-              {polyPoints.length} points · press Enter to save · Esc to clear
+              Polygon · {polyPoints.length} point{polyPoints.length === 1 ? "" : "s"} ·{" "}
+              {polyPoints.length >= 3 ? "closed shape ready, press Enter to save" : "click at least 3 points"} · Esc to clear
             </div>
           )}
-          {tool === "polyline" && polylinePoints.length > 0 && (
+          {!isEditingAnnotation && tool === "polyline" && polylinePoints.length > 0 && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
-              {polylinePoints.length} point{polylinePoints.length === 1 ? "" : "s"} ·{" "}
-              {polylinePoints.length >= 2 ? "press Enter to save" : "click at least one more point"} · Esc to clear
+              Polyline · {polylinePoints.length} point{polylinePoints.length === 1 ? "" : "s"} ·{" "}
+              {polylinePoints.length >= 2 ? "open line ready, press Enter to save" : "click at least one more point"} · Esc to clear
             </div>
           )}
-          {tool === "brush" && (
+          {!isEditingAnnotation && tool === "obb" && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-amber-700/70 rounded-lg px-3 py-2 text-xs text-amber-100 z-10">
+              Rotated box · drag to place · release, then drag the orange dot to rotate
+            </div>
+          )}
+          {isEditingAnnotation && editObb && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-amber-700/70 rounded-lg px-3 py-2 text-xs text-amber-100 z-10">
+              Rotated box edit · drag body to move · white corners resize · orange dot rotates
+            </div>
+          )}
+          {!isEditingAnnotation && tool === "brush" && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg p-2 flex gap-3 items-center text-xs shadow-xl z-10">
               <span className="text-neutral-300">Brush</span>
               <label className="flex items-center gap-2 text-neutral-400">
