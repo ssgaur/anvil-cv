@@ -1752,12 +1752,26 @@ export function WorkviewPage() {
                 />
               )}
               {polyPoints.length > 0 && activeClass && (
-                <Line
-                  points={polyPoints.flat()}
-                  stroke={activeClass.color}
-                  strokeWidth={2 / view.scale}
-                  closed={false}
-                />
+                <>
+                  <Line
+                    points={polyPoints.flat()}
+                    stroke={activeClass.color}
+                    strokeWidth={2.5 / view.scale}
+                    closed={polyPoints.length >= 3}
+                    fill={polyPoints.length >= 3 ? activeClass.color + "22" : undefined}
+                    lineCap="round"
+                    lineJoin="round"
+                  />
+                  {polyPoints.map(([px, py], i) => (
+                    <Circle
+                      key={`pg-${i}`}
+                      x={px} y={py} radius={3.5 / view.scale}
+                      fill={activeClass.color}
+                      stroke="#ffffff"
+                      strokeWidth={1 / view.scale}
+                    />
+                  ))}
+                </>
               )}
               {polylinePoints.length > 0 && activeClass && (
                 <>
@@ -1907,15 +1921,16 @@ export function WorkviewPage() {
               </button>
             </div>
           )}
-          {!isEditingAnnotation && tool === "polygon" && polyPoints.length >= 3 && (
+          {!isEditingAnnotation && tool === "polygon" && polyPoints.length > 0 && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
-              {polyPoints.length} points · press Enter to save · Esc to clear
+              Polygon · {polyPoints.length} point{polyPoints.length === 1 ? "" : "s"} ·{" "}
+              {polyPoints.length >= 3 ? "closed shape ready, press Enter to save" : "click at least 3 points"} · Esc to clear
             </div>
           )}
           {!isEditingAnnotation && tool === "polyline" && polylinePoints.length > 0 && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
-              {polylinePoints.length} point{polylinePoints.length === 1 ? "" : "s"} ·{" "}
-              {polylinePoints.length >= 2 ? "press Enter to save" : "click at least one more point"} · Esc to clear
+              Polyline · {polylinePoints.length} point{polylinePoints.length === 1 ? "" : "s"} ·{" "}
+              {polylinePoints.length >= 2 ? "open line ready, press Enter to save" : "click at least one more point"} · Esc to clear
             </div>
           )}
           {!isEditingAnnotation && tool === "brush" && (
