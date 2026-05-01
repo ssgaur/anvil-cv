@@ -171,7 +171,7 @@ def export_coco(
     Pass `?review_status=approved` to ship only reviewer-approved images
     (recommended for production exports).
     """
-    p = _check(session, project_id)
+    project = _check(session, project_id)
     d = session.get(Dataset, dataset_id)
     if not d or d.project_id != project_id:
         raise HTTPException(404, "dataset not found")
@@ -244,8 +244,8 @@ def export_coco(
                 # COCO keypoints flat list [x,y,v,...]; v=0 → x,y forced 0.
                 flat: list[float] = []
                 num_lab = 0
-                for p in kp_pts:
-                    x, y, v = p
+                for point in kp_pts:
+                    x, y, v = point
                     if v == 0:
                         flat.extend([0.0, 0.0, 0])
                     else:
@@ -280,7 +280,7 @@ def export_coco(
 
     coco = {
         "info": {
-            "description": f"Anvil export — project '{p.name}', dataset '{d.name}'",
+            "description": f"Anvil export — project '{project.name}', dataset '{d.name}'",
             "url": "",
             "version": "1.0",
             "year": datetime.utcnow().year,
