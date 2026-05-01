@@ -1,3 +1,4 @@
+import contextlib
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -8,8 +9,19 @@ from anvil_api.auth import (
     RequireAnyAuthed,
     SessionDep,
 )
-from anvil_api.models import Dataset, Image, Project
+from anvil_api.models import (
+    Annotation,
+    Class,
+    ClassProperty,
+    Comment,
+    Dataset,
+    Image,
+    ModelVersion,
+    ModelVersionStatus,
+    Project,
+)
 from anvil_api.schemas import ProjectIn, ProjectOut
+from anvil_api.storage import storage
 from anvil_api.utils import unique_slug
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -66,5 +78,60 @@ def delete_project(project_id: UUID, session: SessionDep, _admin: RequireAdmin) 
     p = session.get(Project, project_id)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    model_versions = list(
+        session.exec(select(ModelVersion).where(ModelVersion.project_id == project_id)).all()
+    )
+    if any(mv.status == ModelVersionStatus.TRAINING for mv in model_versions):
+        raise HTTPException(status.HTTP_409_CONFLICT, "cannot delete project while a model version is training")
+
+    datasets = list(session.exec(select(Dataset).where(Dataset.project_id == project_id)).all())
+    dataset_ids = [d.id for d in datasets]
+    images: list[Image] = []
+    if dataset_ids:
+        images = list(session.exec(select(Image).where(Image.dataset_id.in_(dataset_ids))).all())  # type: ignore[union-attr]
+    image_ids = [im.id for im in images]
+
+    classes = list(session.exec(select(Class).where(Class.project_id == project_id)).all())
+    class_ids = [c.id for c in classes]
+
+    # Storage cleanup is best-effort; DB cleanup should still complete if a file
+    # has already been removed or is temporarily unavailable.
+    for im in images:
+        for key in (im.storage_key, im.thumbnail_key, im.embedding_key):
+            if key:
+                with contextlib.suppress(Exception):
+                    storage.delete(key)
+    for mv in model_versions:
+        if mv.adapter_key:
+            with contextlib.suppress(Exception):
+                storage.delete(mv.adapter_key)
+
+    p.active_model_version_id = None
+    session.add(p)
+    session.flush()
+
+    for mv in model_versions:
+        session.delete(mv)
+
+    if image_ids:
+        for comment in session.exec(select(Comment).where(Comment.image_id.in_(image_ids))).all():  # type: ignore[union-attr]
+            session.delete(comment)
+        for annotation in session.exec(select(Annotation).where(Annotation.image_id.in_(image_ids))).all():  # type: ignore[union-attr]
+            session.delete(annotation)
+
+    if class_ids:
+        for prop in session.exec(select(ClassProperty).where(ClassProperty.class_id.in_(class_ids))).all():  # type: ignore[union-attr]
+            session.delete(prop)
+        for cls in classes:
+            cls.parent_id = None
+            session.add(cls)
+        session.flush()
+
+    for im in images:
+        session.delete(im)
+    for d in datasets:
+        session.delete(d)
+    for cls in classes:
+        session.delete(cls)
     session.delete(p)
     session.commit()
