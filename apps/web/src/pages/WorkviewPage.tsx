@@ -78,6 +78,7 @@ export function WorkviewPage() {
   const [maskVersion, setMaskVersion] = useState(0); // bump to force Konva re-render
   const [hasBrushStrokes, setHasBrushStrokes] = useState(false);
   const [brushSize, setBrushSize] = useState(24);    // image-space radius (px)
+  const [brushPreview, setBrushPreview] = useState<{ pt: [number, number]; erase: boolean } | null>(null);
   const brushingRef = useRef<{ erase: boolean; lastPt: [number, number] | null } | null>(null);
 
   function ensureMaskCanvas(): HTMLCanvasElement | null {
@@ -153,6 +154,19 @@ export function WorkviewPage() {
     ctx.fill();
     setHasBrushStrokes(true);
     setMaskVersion((v) => v + 1);
+  }
+
+  function updateBrushPreview(pos: { x: number; y: number } | null, erase: boolean) {
+    if (!image || !pos) {
+      setBrushPreview(null);
+      return;
+    }
+    const pt = imagePoint(pos.x, pos.y);
+    if (pt[0] < 0 || pt[1] < 0 || pt[0] > image.width || pt[1] > image.height) {
+      setBrushPreview(null);
+      return;
+    }
+    setBrushPreview({ pt, erase });
   }
 
   async function commitBrush() {
@@ -331,10 +345,15 @@ export function WorkviewPage() {
     setPendingPin(null); setPendingBody("");
     // Drop the brush canvas so the next image starts fresh.
     maskCanvasRef.current = null;
+    setBrushPreview(null);
     setHasBrushStrokes(false);
     setMaskVersion((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageId]);
+
+  useEffect(() => {
+    if (tool !== "brush") setBrushPreview(null);
+  }, [tool]);
 
   // Sibling images (for nav strip)
   useEffect(() => {
@@ -661,6 +680,7 @@ export function WorkviewPage() {
       const p = stage.getPointerPosition(); if (!p) return;
       const pt = imagePoint(p.x, p.y);
       const erase = e.evt.shiftKey || e.evt.altKey;
+      updateBrushPreview(p, erase);
       brushingRef.current = { erase, lastPt: pt };
       paintStroke(null, pt, erase);
       return;
@@ -680,9 +700,13 @@ export function WorkviewPage() {
       setAutoBoxPreview(null);
     }
   }
-  function onMouseMove() {
+  function onMouseMove(e: Konva.KonvaEventObject<MouseEvent>) {
     const stage = stageRef.current; if (!stage) return;
     const p = stage.getPointerPosition(); if (!p) return;
+    if (tool === "brush") {
+      const erase = Boolean(brushingRef.current?.erase || e.evt.shiftKey || e.evt.altKey);
+      updateBrushPreview(p, erase);
+    }
     if (tool === "brush" && brushingRef.current) {
       const pt = imagePoint(p.x, p.y);
       const { erase, lastPt } = brushingRef.current;
@@ -1129,7 +1153,7 @@ export function WorkviewPage() {
   const canvasCursor = isPanning
     ? "grab"
     : tool === "brush"
-        ? "none"
+        ? "crosshair"
         : tool === "comment"
           ? "copy"
           : "crosshair";
@@ -1242,6 +1266,7 @@ export function WorkviewPage() {
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
+            onMouseLeave={() => setBrushPreview(null)}
             draggable={isPanning}
             onDragEnd={(e) => {
               if (isPanning) setView({ ...view, x: e.target.x(), y: e.target.y() });
@@ -1771,6 +1796,34 @@ export function WorkviewPage() {
                   stroke="#0a0a0a"
                   strokeWidth={2 / view.scale}
                 />
+              )}
+              {tool === "brush" && brushPreview && (
+                <>
+                  <Circle
+                    x={brushPreview.pt[0]}
+                    y={brushPreview.pt[1]}
+                    radius={brushSize}
+                    fill={(brushPreview.erase ? "#ef4444" : activeClass?.color ?? "#22c55e") + "22"}
+                    stroke="#0a0a0a"
+                    strokeWidth={3 / view.scale}
+                    opacity={0.95}
+                  />
+                  <Circle
+                    x={brushPreview.pt[0]}
+                    y={brushPreview.pt[1]}
+                    radius={brushSize}
+                    stroke={brushPreview.erase ? "#ef4444" : activeClass?.color ?? "#22c55e"}
+                    strokeWidth={2 / view.scale}
+                  />
+                  <Circle
+                    x={brushPreview.pt[0]}
+                    y={brushPreview.pt[1]}
+                    radius={2.5 / view.scale}
+                    fill="#ffffff"
+                    stroke="#0a0a0a"
+                    strokeWidth={1 / view.scale}
+                  />
+                </>
               )}
             </Layer>
           </Stage>
