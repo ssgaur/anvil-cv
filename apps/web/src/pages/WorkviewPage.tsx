@@ -1967,12 +1967,12 @@ export function WorkviewPage() {
             </div>
           )}
           {!isEditingAnnotation && tool === "obb" && (
-            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-amber-700/70 rounded-lg px-3 py-2 text-xs text-amber-100 z-10">
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
               Rotated box · drag to place · release, then drag the orange dot to rotate
             </div>
           )}
           {isEditingAnnotation && editObb && (
-            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-amber-700/70 rounded-lg px-3 py-2 text-xs text-amber-100 z-10">
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
               Rotated box edit · drag body to move · white corners resize · orange dot rotates
             </div>
           )}
