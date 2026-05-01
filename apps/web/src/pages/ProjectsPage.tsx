@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 import { isAdmin } from "../lib/roles";
@@ -13,6 +14,8 @@ export function ProjectsPage() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -35,10 +38,19 @@ export function ProjectsPage() {
     } finally { setCreating(false); }
   }
 
-  async function del(p: Project) {
-    if (!confirm(`Delete "${p.name}" and all its data?`)) return;
-    await api.deleteProject(p.id);
-    await reload();
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setErr(null);
+    try {
+      await api.deleteProject(deleteTarget.id);
+      setDeleteTarget(null);
+      await reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "delete failed");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -84,7 +96,7 @@ export function ProjectsPage() {
                 </Link>
                 {admin && (
                   <button
-                    onClick={() => del(p)}
+                    onClick={() => setDeleteTarget(p)}
                     className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-rose-400 text-xs"
                     title="delete"
                   >
@@ -101,6 +113,20 @@ export function ProjectsPage() {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={deleteTarget ? `Delete "${deleteTarget.name}"?` : "Delete project?"}
+        description={
+          deleteTarget
+            ? `This will permanently remove ${deleteTarget.dataset_count} dataset(s), ${deleteTarget.image_count} image(s), classes, annotations, comments, and model versions in this project.`
+            : ""
+        }
+        confirmLabel="Delete project"
+        busy={deleting}
+        tone="danger"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }
