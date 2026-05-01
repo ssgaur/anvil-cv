@@ -12,9 +12,12 @@ Run from repo root: `python3 scripts/prod_features_e2e.py`
 from __future__ import annotations
 
 import io
+import json
 import os
 import sys
+import time
 import uuid
+import zipfile
 
 import requests
 
@@ -31,6 +34,20 @@ def die(msg: str) -> None:
 def expect(cond: bool, msg: str) -> None:
     if not cond:
         die(msg)
+
+
+def wait_image_ready(s: requests.Session, image_id: str, timeout_s: int = 60) -> None:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        r = s.get(f"{API}/api/images/{image_id}")
+        expect(r.status_code == 200, f"image status lookup failed {r.status_code}: {r.text}")
+        status = r.json()["status"]
+        if status == "ready":
+            return
+        if status == "failed":
+            die(f"image {image_id} failed embedding")
+        time.sleep(1)
+    die(f"image {image_id} did not become ready within {timeout_s}s")
 
 
 def main() -> None:
@@ -68,7 +85,7 @@ def main() -> None:
                  json={"name": "Car", "parent_id": root["id"], "geometry_type": "polygon"}).json()
     sedan = s.post(f"{API}/api/projects/{pid}/classes",
                    json={"name": "Sedan", "parent_id": car["id"]}).json()
-    print(f"  hierarchy OK (Vehicle > Car > Sedan)")
+    print("  hierarchy OK (Vehicle > Car > Sedan)")
 
     print("[H2] cycle prevention")
     cycle = s.patch(f"{API}/api/projects/{pid}/classes/{root['id']}",
@@ -92,7 +109,7 @@ def main() -> None:
     kp_class = s.post(f"{API}/api/projects/{pid}/classes",
                       json={"name": "Animal", "geometry_type": "keypoints", "keypoint_schema": skel},
                       headers=H).json()
-    print(f"  kp class created with 2 keypoints")
+    print("  kp class created with 2 keypoints")
 
     # ---- Upload a tiny image so we can attach annotations
     from PIL import Image as PILImage
@@ -106,6 +123,7 @@ def main() -> None:
     expect(upr.status_code in (200, 201), f"upload failed {upr.status_code} {upr.text}")
     img = upr.json()[0] if isinstance(upr.json(), list) else upr.json()
     img_id = img["id"]
+    wait_image_ready(s, img_id)
 
     # ---- Geometry validation + creation for each new type
     print("[G1] polyline creation + validation")
@@ -139,8 +157,17 @@ def main() -> None:
     print("[K2] keypoint schema locked once annotated")
     locked = s.patch(f"{API}/api/projects/{pid}/classes/{kp_class['id']}",
                      json={"keypoint_schema": {"keypoints": [{"name": "x"}, {"name": "y"}, {"name": "z"}],
-                                               "edges": []}})
+                                                "edges": []}})
     expect(locked.status_code == 409, f"schema should be locked: {locked.status_code}")
+
+    print("[X0] COCO export includes keypoint annotations")
+    r = s.get(f"{API}/api/projects/{pid}/datasets/{d1['id']}/export/coco?include_images=false")
+    expect(r.status_code == 200, f"coco export with keypoints {r.status_code}: {r.text}")
+    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+        coco = json.loads(z.read("annotations.json"))
+    kp_exports = [a for a in coco["annotations"] if "keypoints" in a]
+    expect(kp_exports, "export should include a keypoint annotation")
+    expect(kp_exports[0]["num_keypoints"] == 2, f"expected 2 labeled keypoints, got {kp_exports[0]}")
 
     # ---- Image filters
     print("[F1] list images: has_annotations + class_id filter")
