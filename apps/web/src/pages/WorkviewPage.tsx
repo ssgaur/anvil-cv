@@ -786,6 +786,9 @@ export function WorkviewPage() {
             });
         setAnnotations((arr) => [...arr, a]);
         pushOp({ kind: "create", ann: a });
+        if (isObb) {
+          selectAnnotation(a);
+        }
       } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
       return;
     }
@@ -1254,7 +1257,7 @@ export function WorkviewPage() {
           <ToolBtn active={!isEditingAnnotation && tool === "polygon"} onClick={() => activateTool("polygon")} label="Polygon (P)" icon="⬡" />
           <ToolBtn active={!isEditingAnnotation && tool === "polyline"} onClick={() => activateTool("polyline")} label="Polyline (L) — click to add vertices, Enter to commit (open path)" icon="〰" />
           <ToolBtn active={!isEditingAnnotation && tool === "bbox"} onClick={() => activateTool("bbox")} label="Bounding Box (B)" icon="▭" />
-          <ToolBtn active={!isEditingAnnotation && tool === "obb"} onClick={() => activateTool("obb")} label="Rotated Box (O) — drag for axis-aligned, then rotate via handle (coming soon)" icon="◇" />
+          <ToolBtn active={!isEditingAnnotation && tool === "obb"} onClick={() => activateTool("obb")} label="Rotated Box (O) — drag to place, then use the orange handle to rotate" icon="◇" />
           <ToolBtn active={!isEditingAnnotation && tool === "brush"} onClick={() => activateTool("brush")} label="Brush (R) — paint a mask, shift to erase, [ / ] resize, Enter to commit" icon="🖌" />
           <ToolBtn active={!isEditingAnnotation && tool === "keypoint"} onClick={() => activateTool("keypoint")} label="Keypoint (K) — pick a keypoints class, then click to drop each keypoint in order; Cmd-click = occluded" icon="⊙" />
           <div className="h-px w-8 bg-neutral-800 my-1" />
@@ -1809,17 +1812,47 @@ export function WorkviewPage() {
                   ))}
                 </>
               )}
-              {bboxStart && bboxEnd && activeClass && (
-                <Rect
-                  x={Math.min(bboxStart[0], bboxEnd[0])}
-                  y={Math.min(bboxStart[1], bboxEnd[1])}
-                  width={Math.abs(bboxEnd[0] - bboxStart[0])}
-                  height={Math.abs(bboxEnd[1] - bboxStart[1])}
-                  stroke={activeClass.color}
-                  strokeWidth={2 / view.scale}
-                  dash={[6 / view.scale, 4 / view.scale]}
-                />
-              )}
+              {bboxStart && bboxEnd && activeClass && (() => {
+                const x = Math.min(bboxStart[0], bboxEnd[0]);
+                const y = Math.min(bboxStart[1], bboxEnd[1]);
+                const w = Math.abs(bboxEnd[0] - bboxStart[0]);
+                const h = Math.abs(bboxEnd[1] - bboxStart[1]);
+                const isObbPreview = tool === "obb";
+                const rotX = x + w / 2;
+                const rotY = y - 28 / view.scale;
+                return (
+                  <>
+                    <Rect
+                      x={x}
+                      y={y}
+                      width={w}
+                      height={h}
+                      stroke={isObbPreview ? "#f59e0b" : activeClass.color}
+                      fill={isObbPreview ? "#f59e0b22" : undefined}
+                      strokeWidth={2 / view.scale}
+                      dash={[6 / view.scale, 4 / view.scale]}
+                    />
+                    {isObbPreview && (
+                      <>
+                        <Line
+                          points={[x + w / 2, y, rotX, rotY]}
+                          stroke="#f59e0b"
+                          strokeWidth={1.5 / view.scale}
+                          dash={[4 / view.scale, 3 / view.scale]}
+                        />
+                        <Circle
+                          x={rotX}
+                          y={rotY}
+                          radius={6 / view.scale}
+                          fill="#f59e0b"
+                          stroke="#ffffff"
+                          strokeWidth={1.5 / view.scale}
+                        />
+                      </>
+                    )}
+                  </>
+                );
+              })()}
               {/* Comment pins (existing) */}
               {comments.filter((c) => c.x != null && c.y != null).map((c) => {
                 const isHovered = hoveredCommentId === c.id;
@@ -1931,6 +1964,16 @@ export function WorkviewPage() {
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-300 z-10">
               Polyline · {polylinePoints.length} point{polylinePoints.length === 1 ? "" : "s"} ·{" "}
               {polylinePoints.length >= 2 ? "open line ready, press Enter to save" : "click at least one more point"} · Esc to clear
+            </div>
+          )}
+          {!isEditingAnnotation && tool === "obb" && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-amber-700/70 rounded-lg px-3 py-2 text-xs text-amber-100 z-10">
+              Rotated box · drag to place · release, then drag the orange dot to rotate
+            </div>
+          )}
+          {isEditingAnnotation && editObb && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-amber-700/70 rounded-lg px-3 py-2 text-xs text-amber-100 z-10">
+              Rotated box edit · drag body to move · white corners resize · orange dot rotates
             </div>
           )}
           {!isEditingAnnotation && tool === "brush" && (
