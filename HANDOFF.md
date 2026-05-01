@@ -2,6 +2,11 @@
 
 > If you are a fresh Copilot CLI session, read THIS file first, then `~/.copilot/session-state/<id>/plan.md` if available.
 > If you are a human picking this up later, same.
+>
+> **Current product-session context now also lives in `.github/COPILOT_HANDOFF.md`.**
+> The paid/team roadmap is in `docs/PAID_PRODUCT_ROADMAP.md`. Older sections
+> below are useful history, but defer to those files plus SQL `todos` for the
+> newest Track B direction.
 
 ## What is Anvil
 OSS image-annotation platform — V7 Darwin alternative — with built-in

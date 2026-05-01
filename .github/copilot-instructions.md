@@ -2,7 +2,7 @@
 
 > **Read this first** when starting a fresh Copilot CLI / Coding Agent session on this repo. It contains everything you need to be productive without scanning the whole codebase.
 >
-> **For current state + open todos + which track you should be on, also read [`HANDOFF.md`](../HANDOFF.md) at the repo root.** This file (`copilot-instructions.md`) is the *stable* onboarding (architecture, conventions, gotchas). HANDOFF.md is the *live* state (what's done, what's next, which folders to touch).
+> **For current state + open todos + which track you should be on, also read [`COPILOT_HANDOFF.md`](COPILOT_HANDOFF.md) and [`HANDOFF.md`](../HANDOFF.md).** This file (`copilot-instructions.md`) is the *stable* onboarding (architecture, conventions, gotchas). COPILOT_HANDOFF.md and HANDOFF.md are the *live* state (what's done, what's next, which folders to touch).
 
 ## Work is split into TWO tracks — pick one per session
 
@@ -73,17 +73,28 @@ anvil-cv/
 
 ## Current status (as of latest commit)
 
-- **35 / 46 todos done.** 11 product backlog items remain: active-learning queue,
-  API tokens, audit log, bundle/model export, YOLO export, comments/mentions,
-  quality dashboard, S3 backend, task assignment, webhooks, Windows verification.
+- **50 / 61 tracked todos done.** 11 product backlog items remain:
+  active-learning queue, API tokens, audit log, bundle/model export, YOLO export,
+  comments/mentions, quality dashboard, S3 backend, task assignment, webhooks,
+  Windows verification.
 - Product hardening is complete: RBAC, HttpOnly cookies, refresh-token rotation,
   password reset, setup wizard, CSRF, rate limiting, observability, backup/restore.
 - Annotation product phase 1 is complete: polyline, keypoints, OBB, bulk ops,
-  class hierarchy, server-side image filters/sort, and COCO export extensions.
+  class hierarchy, server-side image filters/sort, COCO export/import
+  extensions, model versions, comments, and review flow.
+- Recent Workview polish is complete: visible brush cursor, selection exits
+  tools into edit mode, clearer polygon/polyline behavior, OBB creation/edit UX,
+  and remaining browser confirms replaced with in-app dialogs.
 - OSS launch readiness is complete: README, demo GIF, sample loader, community
   files, MkDocs/GitHub Pages workflow, GHCR workflow, onboarding tour, keyboard help.
-- Latest known-good state: launch-ready `main` (use `git log -1 --oneline` for the exact newest commit).
-- Source of truth: [HANDOFF.md](../HANDOFF.md) plus the SQL `todos` table.
+- Current strategic direction: paid/Pro team review workflows + Model Studio
+  fine-tuning, gated behind OSS/Pro feature flags. See
+  [docs/PAID_PRODUCT_ROADMAP.md](../docs/PAID_PRODUCT_ROADMAP.md).
+- Latest known-good state: `main` at or after
+  `cbdfa2d fix(web): replace remaining browser confirms with app dialogs`.
+- Source of truth: [COPILOT_HANDOFF.md](COPILOT_HANDOFF.md),
+  [HANDOFF.md](../HANDOFF.md), [docs/PAID_PRODUCT_ROADMAP.md](../docs/PAID_PRODUCT_ROADMAP.md),
+  plus the SQL `todos` table.
 
 ## Local dev — start the app
 
@@ -130,6 +141,8 @@ Full setup including Postgres bootstrap: [docs/DEV_SETUP.md](../docs/DEV_SETUP.m
 8. **Encoder cache lives on disk** as `embeddings/<image_id>.npz`. The worker writes them at upload time. Training reads them via `_restore_features(predictor, path)` so the encoder never runs at training time — that's why LoRA is fast on M1.
 9. **Adapter inference is cached** in `_adapter_predictors` dict in `training.py`, keyed by adapter path. The `/compare` endpoint deliberately builds fresh predictors each call — don't "optimize" it to use the cache or A/B numbers will be stale.
 10. **Class properties** (`apps/api/anvil_api/models.py::ClassProperty`) come in three flavors via `ClassPropertyType` enum: `single`, `multi`, `text`. Annotation `properties` is a JSONB blob keyed by property id.
+11. **Review approval/rejection blocks self-review.** Reviewer/admin can approve or reject submitted work, but the submitter cannot review their own image.
+12. **Do not add browser-native popups.** Use `ConfirmDialog` for destructive confirms and toast/error UI for status messages.
 
 ## Coding conventions
 
@@ -167,9 +180,11 @@ Full setup including Postgres bootstrap: [docs/DEV_SETUP.md](../docs/DEV_SETUP.m
 - [docs/FINE_TUNING.md](../docs/FINE_TUNING.md) — LoRA strategy, comparison vs Meta's full FT
 - [docs/API.md](../docs/API.md) — every endpoint
 - [docs/FEATURES.md](../docs/FEATURES.md) — UI features + shortcuts
+- [docs/PAID_PRODUCT_ROADMAP.md](../docs/PAID_PRODUCT_ROADMAP.md) — paid/Pro review workflow + fine-tuning plan
 - [docs/FAQ.md](../docs/FAQ.md) — common user questions
+- [.github/COPILOT_HANDOFF.md](COPILOT_HANDOFF.md) — current product/session handoff
 - `plan/latest.md` — author's working notes (may be stale; trust the code)
 
 ## Session-state memory (for Copilot CLI specifically)
 
-The author runs Copilot CLI long sessions. Session state lives at `~/.copilot/session-state/<uuid>/plan.md` with checkpoints in `checkpoints/`. **Always read `plan.md` first** when resuming, then check the latest checkpoint title for the most recent feature shipped.
+The author runs Copilot CLI long sessions. Session state lives at `~/.copilot/session-state/<uuid>/plan.md` with checkpoints in `checkpoints/`. **Always read `plan.md` first** when resuming, then read `.github/COPILOT_HANDOFF.md` and check the latest checkpoint title for the most recent feature shipped.

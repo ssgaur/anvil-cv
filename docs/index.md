@@ -34,4 +34,5 @@ versions, and users stay in your own deployment.
 - [Fine-tuning](FINE_TUNING.md)
 - [API](API.md)
 - [Dev setup](DEV_SETUP.md)
-
+- [Roadmap](ROADMAP.md)
+- [Paid product roadmap](PAID_PRODUCT_ROADMAP.md)

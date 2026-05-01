@@ -2,6 +2,11 @@
 
 Live status. Done = shipped to `main`. Order within a phase is suggested, not mandatory.
 
+For the next paid/team product track, see
+[Paid Product Roadmap](PAID_PRODUCT_ROADMAP.md). That document is the canonical
+plan for OSS vs Pro feature flags, review workflow management, Model Studio,
+fine-tuning workflow stages, and the eight paid milestones.
+
 ## Phase 0 — Foundations
 - [x] Repo scaffold (monorepo: web, api, ml, worker, storage)
 - [x] Domain model + Postgres + SQLModel
@@ -58,13 +63,23 @@ Live status. Done = shipped to `main`. Order within a phase is suggested, not ma
 - [ ] **`launch-post`** — Show HN / Reddit / dev.to write-up
 - [ ] **`launch`** — actually press post
 
+## Phase 5 — Paid / Pro product track
+- [ ] **`paid-feature-flag-foundation`** — OSS/Pro edition flags, API/UI guards, permission vocabulary
+- [ ] **`paid-project-memberships`** — org/project memberships, multiple roles per user, team admin UI
+- [ ] **`paid-review-queue-mvp`** — WorkItem/Assignment, My Queue, assign/reassign, workload counts
+- [ ] **`paid-workflow-engine`** — workflow/stage/edge schema, accepted/rejected routing, default workflow
+- [ ] **`paid-workflow-builder-ui`** — V7-inspired canvas, stage palette, node config, item counts
+- [ ] **`paid-advanced-review`** — second review, consensus, rejection issue threads, audit/analytics
+- [ ] **`paid-finetuning-studio-mvp`** — training snapshots, approved-label dataset builder, eval/deploy/rollback
+- [ ] **`paid-defect-finetuning-ai-review`** — crop sampling, hard negatives, small-object metrics, AI review, active learning
+
 ## Out of scope (v0)
-- Workflow Builder
+- Workflow Builder (planned for paid/Pro; see [Paid Product Roadmap](PAID_PRODUCT_ROADMAP.md))
 - Polyline / Keypoint / Directional Vector / Instance ID tools
 - Video annotation (multi-frame / masklets)
-- Multi-org SaaS billing
+- Multi-org SaaS billing (paid/Pro foundation planned; billing itself later)
 - SSO / SAML
-- Consensus / N-of-M annotation
+- Consensus / N-of-M annotation (planned for paid/Pro)
 
 ## Future ideas (post-v0, ungroomed)
 See [FUTURE.md](FUTURE.md).
