@@ -168,6 +168,12 @@ Full setup including Postgres bootstrap: [docs/DEV_SETUP.md](../docs/DEV_SETUP.m
 
 ## Common debugging recipes
 
+**Run `python3 scripts/diagnose.py` first.** It reports container OOM kills,
+service health, memory pressure, failed images, and recent incidents — each with
+the exact command to fix it. Use `--json` for machine-readable output. For the
+cumulative cross-container log, run `python3 scripts/logcollect.py` and read
+`logs/anvil.jsonl`. Full details: [docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md).
+
 - **API 500?** `tail -100 logs/api.log` — most issues are SQLModel relationship errors (gotcha #1) or missing ML service.
 - **ML predict slow?** First call after restart is slow (model warm-up). Subsequent calls hit the cached predictor.
 - **Web shows stale data?** `apps/web/src/lib/api.ts` doesn't cache; check React Query / Zustand store invalidation in the relevant page component.
@@ -181,6 +187,7 @@ Full setup including Postgres bootstrap: [docs/DEV_SETUP.md](../docs/DEV_SETUP.m
 - [docs/API.md](../docs/API.md) — every endpoint
 - [docs/FEATURES.md](../docs/FEATURES.md) — UI features + shortcuts
 - [docs/PAID_PRODUCT_ROADMAP.md](../docs/PAID_PRODUCT_ROADMAP.md) — paid/Pro review workflow + fine-tuning plan
+- [docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md) — diagnose script, cumulative log, incident codes
 - [docs/FAQ.md](../docs/FAQ.md) — common user questions
 - [.github/COPILOT_HANDOFF.md](COPILOT_HANDOFF.md) — current product/session handoff
 - `plan/latest.md` — author's working notes (may be stale; trust the code)

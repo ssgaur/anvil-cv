@@ -9,15 +9,95 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from anvil_ml import __version__
 from anvil_ml.engine import device_name, embed, predict, score_uncertainty
+from anvil_ml.obs import configure_logging, memory_report
 
-app = FastAPI(title="Anvil ML", version=__version__)
+log = logging.getLogger("anvil.ml")
+
+# Warn before the kernel kills us; an OOM kill itself can never be logged.
+_MEMORY_WARN_PCT = 85.0
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    configure_logging(level="INFO")
+    log.info(
+        "ml_service_start",
+        extra={"version": __version__, "device": device_name(), **memory_report()},
+    )
+    yield
+
+
+app = FastAPI(title="Anvil ML", version=__version__, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log every ML call with timing + memory, so a later OOM has context.
+
+    A container that is OOM-killed dies without unwinding, so the last line
+    emitted here is the best evidence of what killed it.
+    """
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    started = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        log.exception(
+            "ml_request_failed",
+            extra={
+                "path": request.url.path,
+                "duration_ms": round((time.monotonic() - started) * 1000, 2),
+                "error": f"{type(e).__name__}: {e}"[:500],
+                **memory_report(),
+            },
+        )
+        raise
+
+    mem = memory_report()
+    duration_ms = round((time.monotonic() - started) * 1000, 2)
+    log.info(
+        "ml_request",
+        extra={
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": duration_ms,
+            **mem,
+        },
+    )
+    used_pct = mem.get("memory_used_pct")
+    if used_pct is not None and used_pct >= _MEMORY_WARN_PCT:
+        log.warning(
+            "incident:ml_memory_pressure",
+            extra={
+                "code": "ml_memory_pressure",
+                "component": "ml",
+                "operation": request.url.path,
+                "probable_cause": (
+                    f"ML container is using {used_pct}% of its memory limit "
+                    f"({mem.get('memory_used_mb')}MB of {mem.get('memory_limit_mb')}MB). "
+                    "SAM2 is close to being OOM-killed."
+                ),
+                "remediation": (
+                    "Raise the Docker/Rancher VM memory to at least 8GB (10GB "
+                    "recommended), then `docker compose up -d`. If already high, "
+                    "use a smaller SAM2 variant."
+                ),
+                **mem,
+            },
+        )
+    return response
 
 
 class EmbedRequest(BaseModel):
@@ -52,8 +132,13 @@ class TrainRequest(BaseModel):
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "version": __version__, "device": device_name()}
+def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "version": __version__,
+        "device": device_name(),
+        **memory_report(),
+    }
 
 
 @app.post("/embed")

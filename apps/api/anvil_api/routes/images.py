@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import logging
+import time
 from datetime import UTC
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -19,6 +21,7 @@ from fastapi import (
 from PIL import Image as PILImage
 from sqlmodel import Session, func, select
 
+from anvil_api import diagnostics
 from anvil_api.auth import (
     RequireAnyAuthed,
     RequireLabeler,
@@ -41,6 +44,8 @@ from anvil_api.schemas import ImageOut, PredictIn, PredictOut, ReviewActionIn
 from anvil_api.storage import storage, verify_file_signature
 
 router = APIRouter(tags=["images"])
+
+_embed_log = logging.getLogger("anvil.embed")
 
 
 def _check_dataset(session: Session, project_id: UUID, dataset_id: UUID) -> Dataset:
@@ -164,6 +169,7 @@ async def _embed_async(image_id: UUID) -> None:
         session.add(img)
         session.commit()
 
+        started = time.monotonic()
         try:
             embedding_key = f"datasets/{img.dataset_id}/embeddings/{img.id}.npz"
             await ml_client.embed(
@@ -173,9 +179,26 @@ async def _embed_async(image_id: UUID) -> None:
             img.embedding_key = embedding_key
             img.status = ImageStatus.READY
             img.error = None
-        except Exception as e:  # pragma: no cover
+            _embed_log.info(
+                "embed_ok",
+                extra={
+                    "image_id": str(img.id),
+                    "dataset_id": str(img.dataset_id),
+                    "duration_ms": round((time.monotonic() - started) * 1000, 2),
+                },
+            )
+        except Exception as e:
+            payload = diagnostics.record(
+                component="api",
+                operation="embed",
+                exc=e,
+                image_id=img.id,
+                dataset_id=img.dataset_id,
+                filename=img.filename,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
             img.status = ImageStatus.FAILED
-            img.error = str(e)[:500]
+            img.error = diagnostics.summarize(payload)[:500]
         session.add(img)
         session.commit()
 

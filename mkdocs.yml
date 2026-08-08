@@ -24,6 +24,7 @@ nav:
   - API: API.md
   - Dev setup: DEV_SETUP.md
   - FAQ: FAQ.md
+  - Observability: OBSERVABILITY.md
   - Roadmap: ROADMAP.md
   - Paid product roadmap: PAID_PRODUCT_ROADMAP.md
   - Future backlog: FUTURE.md
