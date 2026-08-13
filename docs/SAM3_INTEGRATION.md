@@ -54,7 +54,52 @@ Product implications:
 - "Many candidates, all low confidence" is a strong active-learning signal
   (Phase 21) and a good argument for fine-tuning.
 
+## Implementation status
+
+**Done — ML layer (STEP 4/5).** SAM2 behaviour unchanged.
+
+| Piece | File |
+|---|---|
+| Provider protocol, `Capabilities`, `Instance` | `apps/ml/anvil_ml/providers/base.py` |
+| SAM2 wrapper (delegates to `engine.py`, no behaviour change) | `providers/sam2_provider.py` |
+| SAM3 via Transformers (text → N instances + RLE) | `providers/sam3_provider.py` |
+| Memory-aware lazy loading + LRU eviction | `providers/registry.py` |
+| `GET /capabilities`, `POST /predict_concept`, `POST /models/{name}/release` | `apps/ml/anvil_ml/main.py` |
+
+Verified in Docker: `wheel` → 4 instances (0.96/0.96/0.90/0.91) with RLE
+preserved; `motorcycle` → 0 (true negative); SAM2 e2e smoketest + COCO
+round-trip + undo/redo + bbox-resize all still pass.
+
+Capability guard rejects `sam2` + text with HTTP 400 **without loading** the
+model (residency stays `false`), so an unsupported request costs no memory.
+
+**Not yet wired:** API routes, canonical Concept/Query schema, and the
+annotation UI. SAM3 is reachable on the ML service but not yet from the app.
+
+### Memory behaviour on a 16GB Mac
+
+Measured in-container: **3.77 GB** with SAM3 loaded; **~5.0 GB** with SAM2 and
+SAM3 both resident. Budget defaults to `ANVIL_MODEL_MEMORY_BUDGET_GB=6.0`.
+
+Caveat: `release()` drops references and runs `gc`, but Python/malloc do not
+promptly return freed pages, so cgroup RSS may not fall immediately. The budget
+still prevents loading past the limit, which is what avoids an OOM kill.
+
+### Docker wiring
+
+The ML container mounts the host HF cache
+(`${HF_CACHE_DIR:-${HOME}/.cache/huggingface}` → `/hf-cache`, with
+`HF_HOME=/hf-cache`), so SAM3 is not re-downloaded per machine. Weights are
+gated: either `hf auth login` on the host, or set `HF_TOKEN` in `.env`. Because
+SAM3 is lazy-loaded, a missing or unauthorised cache degrades to "SAM2 only"
+instead of breaking startup.
+
+Note: Docker on macOS has **no GPU passthrough**, so MPS is unavailable inside
+containers — SAM3 runs CPU-bound at ~13s/query locally. This is the main
+argument for the remote GPU execution backend.
+
 ## HF repository registry (Phase 26)
+
 
 Sizes from the HF API; **datasets were NOT downloaded** (RULE 11).
 

@@ -20,6 +20,13 @@ from pydantic import BaseModel
 from anvil_ml import __version__
 from anvil_ml.engine import device_name, embed, predict, score_uncertainty
 from anvil_ml.obs import configure_logging, memory_report
+from anvil_ml.providers import (
+    CapabilityError,
+    capabilities_of,
+    get_provider,
+    list_capabilities,
+)
+from anvil_ml.providers import release as release_provider
 
 log = logging.getLogger("anvil.ml")
 
@@ -139,6 +146,81 @@ def health() -> dict[str, Any]:
         "device": device_name(),
         **memory_report(),
     }
+
+
+@app.get("/capabilities")
+def capabilities_endpoint() -> dict[str, Any]:
+    """What each model can be prompted with.
+
+    The frontend reads this instead of assuming every model accepts the same
+    prompts — SAM2 has no text encoder, SAM3 has no point/box refinement here.
+    """
+    return list_capabilities()
+
+
+class ConceptRequest(BaseModel):
+    image_path: str
+    text: str
+    model: str = "sam3"
+    threshold: float = 0.5
+    max_instances: int = 100
+
+
+@app.post("/predict_concept")
+async def predict_concept_endpoint(req: ConceptRequest) -> dict[str, Any]:
+    """Text-prompted segmentation returning EVERY matching instance.
+
+    An empty `instances` list means the model found nothing. That is NOT the
+    same as "verified absent" — only a human can assert that, so the caller
+    must not treat this as a negative training example on its own.
+    """
+    try:
+        caps = capabilities_of(req.model)
+    except KeyError as e:
+        # str(KeyError) wraps the message in quotes; use the raw arg.
+        raise HTTPException(404, e.args[0] if e.args else "unknown model") from e
+
+    # Check capability BEFORE loading: otherwise asking SAM2 for a text prompt
+    # would pull ~2.1GB into memory only to reject the request.
+    if not caps.text:
+        raise HTTPException(
+            400,
+            f"model '{req.model}' does not support text prompts; "
+            "use point/box prompts or select a text-capable model",
+        )
+
+    provider = get_provider(req.model)
+
+    try:
+        instances = await asyncio.to_thread(
+            provider.predict_concept,
+            req.image_path,
+            req.text,
+            req.threshold,
+            req.max_instances,
+        )
+    except CapabilityError as e:
+        raise HTTPException(400, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, f"missing file: {e}") from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"predict_concept failed: {e}") from e
+
+    return {
+        "model": req.model,
+        "text": req.text,
+        "threshold": req.threshold,
+        "instances": [i.to_dict() for i in instances],
+        "count": len(instances),
+    }
+
+
+@app.post("/models/{name}/release")
+def release_model_endpoint(name: str) -> dict[str, Any]:
+    """Free a model's memory. Useful on laptop-sized deployments."""
+    return {"released": release_provider(name), "model": name}
 
 
 @app.post("/embed")

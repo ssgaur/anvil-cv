@@ -126,6 +126,16 @@ services:
       SAM2_CHECKPOINT: /checkpoints/sam2.1_hiera_base_plus.pt
       SAM2_MODEL_CFG: configs/sam2.1/sam2.1_hiera_b+.yaml
       ML_DEVICE: ${ML_DEVICE:-cpu}
+      # SAM3 weights are read from the shared HF cache below. The model is
+      # lazy-loaded, so a missing/unauthenticated cache degrades to "SAM2 only"
+      # instead of breaking startup.
+      HF_HOME: /hf-cache
+      HF_TOKEN: ${HF_TOKEN:-}
+      SAM3_MODEL_ID: ${SAM3_MODEL_ID:-facebook/sam3}
+      # SAM2 (~2.1GB) + SAM3 (~3.5GB) both resident is ~5.6GB. Above this
+      # budget the registry releases the least-recently-used model rather than
+      # letting the kernel OOM-kill the container.
+      ANVIL_MODEL_MEMORY_BUDGET_GB: ${ANVIL_MODEL_MEMORY_BUDGET_GB:-6.0}
     depends_on:
       init-checkpoint:
         condition: service_completed_successfully
@@ -134,6 +144,9 @@ services:
       - local_data:/data
       - checkpoints:/checkpoints:ro
       - adapters:/adapters
+      # Reuse the host's Hugging Face cache so SAM3 is not re-downloaded per
+      # machine. Override with HF_CACHE_DIR if your cache lives elsewhere.
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf-cache
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health').read()"]
       interval: 10s
