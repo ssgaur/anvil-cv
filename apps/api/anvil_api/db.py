@@ -101,6 +101,90 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_images_dataset_uploaded "
             "ON images(dataset_id, uploaded_at)"
         ))
+        # --- Canonical training-ready schema (concepts / queries / provenance) ---
+        # Concept link + mask fidelity + provenance on annotations. All nullable
+        # or defaulted so existing SAM2 rows stay valid without a backfill.
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS query_id UUID"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS mask_rle JSONB"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS generated_by TEXT "
+            "NOT NULL DEFAULT 'human'"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS model_name VARCHAR(64)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS model_version_id UUID"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS model_score DOUBLE PRECISION"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS human_verified BOOLEAN "
+            "NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS human_corrected BOOLEAN "
+            "NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS original_geometry JSONB"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ADD COLUMN IF NOT EXISTS original_mask_rle JSONB"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_annotations_query_id ON annotations(query_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_annotations_generated_by "
+            "ON annotations(generated_by)"
+        ))
+        # Normalise enum-typed columns to TEXT. A database created by an
+        # earlier create_all() may have native PG enums here (labels are
+        # UPPERCASE names), while a migrated one has TEXT with lowercase
+        # values. Converting makes both agree; it is a no-op once TEXT.
+        conn.execute(text(
+            "ALTER TABLE annotations ALTER COLUMN generated_by TYPE TEXT "
+            "USING lower(generated_by::text)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ALTER COLUMN generated_by SET DEFAULT 'human'"
+        ))
+        conn.execute(text(
+            "ALTER TABLE queries ALTER COLUMN status TYPE TEXT "
+            "USING lower(status::text)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE queries ALTER COLUMN status SET DEFAULT 'unannotated'"
+        ))
+        # Backfill provenance for rows created before this column existed:
+        # AnnotationSource.MODEL predates SAM3, so it can only have been SAM2.
+        conn.execute(text(
+            "UPDATE annotations SET generated_by = 'sam2' "
+            "WHERE source = 'MODEL' AND generated_by = 'human'"
+        ))
+        conn.execute(text(
+            "UPDATE annotations SET generated_by = 'imported' "
+            "WHERE source = 'IMPORTED' AND generated_by = 'human'"
+        ))
+        # One concept phrase per project; one query per (image, concept).
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_concepts_project_phrase "
+            "ON concepts(project_id, canonical_phrase)"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_queries_image_concept "
+            "ON queries(image_id, concept_id)"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_dataset_versions_dataset_version "
+            "ON dataset_versions(dataset_id, version)"
+        ))
 
 
 def get_session() -> Iterator[Session]:

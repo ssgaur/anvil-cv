@@ -10,9 +10,11 @@ from pydantic import BaseModel, EmailStr, Field
 from anvil_api.models import (
     AnnotationSource,
     ClassPropertyType,
+    GeneratedBy,
     GeometryType,
     ImageStatus,
     ModelVersionStatus,
+    QueryStatus,
     ReviewStatus,
 )
 
@@ -222,6 +224,16 @@ class AnnotationIn(BaseModel):
     source: AnnotationSource = AnnotationSource.MANUAL
     confidence: float | None = None
     properties: dict[str, Any] = {}
+    # Concept/provenance (optional so existing SAM2 clients are unaffected)
+    query_id: UUID | None = None
+    mask_rle: dict[str, Any] | None = None
+    generated_by: GeneratedBy = GeneratedBy.HUMAN
+    model_name: str | None = None
+    model_version_id: UUID | None = None
+    model_score: float | None = None
+    human_verified: bool = False
+    original_geometry: dict[str, Any] | None = None
+    original_mask_rle: dict[str, Any] | None = None
 
 
 class AnnotationPatch(BaseModel):
@@ -229,6 +241,8 @@ class AnnotationPatch(BaseModel):
     geometry_type: GeometryType | None = None
     geometry: dict[str, Any] | None = None
     properties: dict[str, Any] | None = None
+    mask_rle: dict[str, Any] | None = None
+    human_verified: bool | None = None
 
 
 class AnnotationOut(BaseModel):
@@ -240,6 +254,103 @@ class AnnotationOut(BaseModel):
     source: AnnotationSource
     confidence: float | None
     properties: dict[str, Any] = {}
+    query_id: UUID | None = None
+    mask_rle: dict[str, Any] | None = None
+    generated_by: GeneratedBy = GeneratedBy.HUMAN
+    model_name: str | None = None
+    model_version_id: UUID | None = None
+    model_score: float | None = None
+    human_verified: bool = False
+    human_corrected: bool = False
+    created_at: datetime
+
+
+# ---- Concepts (open-vocabulary phrases)
+class ConceptIn(BaseModel):
+    canonical_phrase: str = Field(min_length=1, max_length=255)
+    aliases: list[str] = []
+    description: str | None = None
+    class_id: UUID | None = None
+    color: str | None = None
+
+
+class ConceptPatch(BaseModel):
+    canonical_phrase: str | None = Field(default=None, min_length=1, max_length=255)
+    aliases: list[str] | None = None
+    description: str | None = None
+    class_id: UUID | None = None
+    color: str | None = None
+
+
+class ConceptOut(BaseModel):
+    id: UUID
+    project_id: UUID
+    canonical_phrase: str
+    aliases: list[str] = []
+    description: str | None = None
+    class_id: UUID | None = None
+    color: str | None = None
+    created_at: datetime
+    query_count: int = 0
+    instance_count: int = 0
+
+
+# ---- Queries (image x concept)
+class QueryIn(BaseModel):
+    concept_id: UUID
+    text: str | None = None  # defaults to the concept's canonical phrase
+    status: QueryStatus = QueryStatus.UNANNOTATED
+    is_exhaustive: bool = False
+    is_pixel_exhaustive: bool = False
+    model_name: str | None = None
+    model_version_id: UUID | None = None
+    threshold: float | None = None
+
+
+class QueryPatch(BaseModel):
+    status: QueryStatus | None = None
+    is_exhaustive: bool | None = None
+    is_pixel_exhaustive: bool | None = None
+    text: str | None = None
+
+
+class QueryOut(BaseModel):
+    id: UUID
+    image_id: UUID
+    concept_id: UUID
+    text: str
+    status: QueryStatus
+    is_exhaustive: bool
+    is_pixel_exhaustive: bool
+    model_name: str | None = None
+    model_version_id: UUID | None = None
+    threshold: float | None = None
+    instance_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---- Dataset versions (immutable training snapshots)
+class DatasetVersionIn(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    # Only include images that reached this review state (default: approved
+    # only, so models are not trained on unreviewed labels).
+    review_status: ReviewStatus | None = ReviewStatus.APPROVED
+    train_split: float = Field(default=0.8, ge=0.0, le=1.0)
+    val_split: float = Field(default=0.1, ge=0.0, le=1.0)
+    seed: int = 42
+
+
+class DatasetVersionOut(BaseModel):
+    id: UUID
+    dataset_id: UUID
+    version: int
+    name: str | None = None
+    description: str | None = None
+    stats: dict[str, Any] = {}
+    splits: dict[str, Any] = {}
+    frozen: bool
     created_at: datetime
 
 

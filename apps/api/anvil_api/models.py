@@ -39,6 +39,34 @@ class AnnotationSource(StrEnum):
     IMPORTED = "imported"
 
 
+class GeneratedBy(StrEnum):
+    """Which system actually produced a mask.
+
+    `AnnotationSource` only says manual/model/imported. For training we need to
+    know *which* model, so we can measure per-model acceptance rates and avoid
+    training a model on its own unreviewed output.
+    """
+
+    HUMAN = "human"
+    SAM2 = "sam2"
+    SAM3 = "sam3"
+    IMPORTED = "imported"
+
+
+class QueryStatus(StrEnum):
+    """Lifecycle of one (image, concept) pair.
+
+    `VERIFIED_ABSENT` is the critical one: it is the only way to record a
+    trustworthy negative example. An empty instance list on its own means
+    "nobody has looked yet" and must never be exported as a negative.
+    """
+
+    UNANNOTATED = "unannotated"
+    IN_PROGRESS = "in_progress"
+    VERIFIED_PRESENT = "verified_present"
+    VERIFIED_ABSENT = "verified_absent"
+
+
 class ModelVersionStatus(StrEnum):
     PENDING = "pending"
     TRAINING = "training"
@@ -302,6 +330,134 @@ class Annotation(SQLModel, table=True):
     #   single → str
     #   multi  → list[str]
     #   text   → str
+
+    # ---- Concept link (SAM3 / open-vocabulary) ----
+    # Null for classic SAM2 class-based annotations, so existing rows are valid.
+    query_id: UUID | None = Field(default=None, foreign_key="queries.id", index=True)
+
+    # ---- Mask fidelity ----
+    # Compressed COCO RLE of the exact mask. Polygons are a lossy simplification
+    # (SAM2 and SAM3 both run approxPolyDP), which is fine for editing but bad
+    # as a training target. Trainers should prefer mask_rle when present.
+    mask_rle: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
+
+    # ---- Provenance (Phase 22) ----
+    # Stored as TEXT rather than a native PG enum: enums require ALTER TYPE to
+    # evolve, and create_all() vs ALTER TABLE would otherwise produce different
+    # column types on fresh vs migrated databases. Matches User.role.
+    generated_by: GeneratedBy = Field(
+        default=GeneratedBy.HUMAN,
+        sa_column=Column(String, nullable=False, server_default="human", index=True),
+    )
+    model_name: str | None = Field(default=None, max_length=64)
+    model_version_id: UUID | None = Field(default=None, index=True)
+    model_score: float | None = None
+    human_verified: bool = Field(default=False, index=True)
+    human_corrected: bool = Field(default=False, index=True)
+    # The model's untouched output, kept so we can measure how much correction
+    # a prediction needed and never lose the original on edit (Phase 4).
+    original_geometry: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON)
+    )
+    original_mask_rle: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON)
+    )
+
+    created_by: UUID | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Concept(SQLModel, table=True):
+    """A canonical text phrase used as an open-vocabulary query (SAM3).
+
+    Kept separate from `Class` on purpose. A Class is a fixed taxonomy entry
+    with a geometry type and a colour; a Concept is a *phrase* you can ask a
+    model about ("red car", "leaf blight"). Linking the two is optional so a
+    project can use SAM2 classes, SAM3 concepts, or both.
+    """
+
+    __tablename__ = "concepts"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    project_id: UUID = Field(foreign_key="projects.id", index=True)
+    # The exact phrase sent to the model and exported as the training category.
+    canonical_phrase: str = Field(max_length=255, index=True)
+    # Alternative wordings kept for search/UX only. Deliberately NOT injected
+    # into training data (Phase 23) — that would silently change the dataset.
+    aliases: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    description: str | None = Field(default=None, max_length=1000)
+    # Optional bridge to the SAM2 taxonomy so both models can share a label.
+    class_id: UUID | None = Field(default=None, foreign_key="classes.id", index=True)
+    color: str | None = Field(default=None, max_length=7)
+    created_by: UUID | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Query(SQLModel, table=True):
+    """One (image, concept) annotation unit — the core SAM3 training record.
+
+    SAM3 does not learn from "image + object" alone; it learns from
+    "image + phrase -> every matching instance, and whether that set is
+    complete". Those completeness flags cannot be inferred after the fact,
+    which is why they live here rather than being derived at export time.
+    """
+
+    __tablename__ = "queries"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    image_id: UUID = Field(foreign_key="images.id", index=True)
+    concept_id: UUID = Field(foreign_key="concepts.id", index=True)
+    # Snapshot of the phrase actually used, so later concept renames do not
+    # rewrite history for datasets already exported.
+    text: str = Field(max_length=255)
+
+    status: QueryStatus = Field(
+        default=QueryStatus.UNANNOTATED,
+        sa_column=Column(
+            String, nullable=False, server_default="unannotated", index=True
+        ),
+    )
+    # True iff EVERY instance of this concept in this image is annotated.
+    is_exhaustive: bool = Field(default=False)
+    # True iff the masks cover all target pixels (not just some instances).
+    is_pixel_exhaustive: bool = Field(default=False)
+
+    # Which model produced the candidates, for acceptance-rate metrics.
+    model_name: str | None = Field(default=None, max_length=64)
+    model_version_id: UUID | None = Field(default=None)
+    threshold: float | None = None
+
+    created_by: UUID | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class DatasetVersion(SQLModel, table=True):
+    """Immutable snapshot of a dataset, so a training run is reproducible.
+
+    Without this, a model trained "on dataset X" is unreproducible the moment
+    anyone edits a mask. Once `frozen` is set the row must never be mutated;
+    corrections create a new version instead.
+    """
+
+    __tablename__ = "dataset_versions"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    dataset_id: UUID = Field(foreign_key="datasets.id", index=True)
+    version: int = Field(index=True)
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=1000)
+
+    # Exact ID lists captured at freeze time: image_ids, annotation_ids,
+    # query_ids, concept_ids. Stored rather than re-queried so the membership
+    # cannot drift.
+    snapshot: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Denormalised counts + class/concept histograms for quick display.
+    stats: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Reproducible train/val/test assignment (image_id -> split).
+    splits: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+
+    frozen: bool = Field(default=True)
     created_by: UUID | None = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow)
 

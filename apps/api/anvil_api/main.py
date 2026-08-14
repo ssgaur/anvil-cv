@@ -22,6 +22,8 @@ from anvil_api.routes import (
     bulk,
     classes,
     comments,
+    concepts,
+    dataset_versions,
     datasets,
     images,
     models,
@@ -87,6 +89,8 @@ app.include_router(setup.router, prefix=API)
 app.include_router(refresh.router, prefix=API)
 app.include_router(password_reset.router, prefix=API)
 app.include_router(bulk.router, prefix=API)
+app.include_router(concepts.router, prefix=API)
+app.include_router(dataset_versions.router, prefix=API)
 
 
 @app.get("/health")

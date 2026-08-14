@@ -20,6 +20,7 @@ nav:
   - Home: index.md
   - Features: FEATURES.md
   - Architecture: ARCHITECTURE.md
+  - Data model: DATA_MODEL.md
   - Fine-tuning: FINE_TUNING.md
   - API: API.md
   - Dev setup: DEV_SETUP.md
