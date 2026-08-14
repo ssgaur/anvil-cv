@@ -14,6 +14,7 @@ from anvil_api.models import (
     Class,
     ClassProperty,
     ClassPropertyType,
+    GeneratedBy,
     GeometryType,
     Image,
     ReviewStatus,
@@ -50,6 +51,14 @@ def _to_out(a: Annotation) -> AnnotationOut:
         geometry_type=a.geometry_type, geometry=a.geometry,
         source=a.source, confidence=a.confidence,
         properties=a.properties or {},
+        query_id=a.query_id,
+        mask_rle=a.mask_rle,
+        generated_by=a.generated_by,
+        model_name=a.model_name,
+        model_version_id=a.model_version_id,
+        model_score=a.model_score,
+        human_verified=a.human_verified,
+        human_corrected=a.human_corrected,
         created_at=a.created_at,
     )
 
@@ -134,6 +143,21 @@ def create_annotation(
         geometry_type=body.geometry_type, geometry=geom,
         source=body.source, confidence=body.confidence,
         properties=_validate_properties(session, body.class_id, body.properties or {}),
+        query_id=body.query_id,
+        mask_rle=body.mask_rle,
+        generated_by=body.generated_by,
+        model_name=body.model_name,
+        model_version_id=body.model_version_id,
+        model_score=body.model_score,
+        human_verified=body.human_verified,
+        # Preserve the model's untouched output so we can later measure how
+        # much human correction a prediction actually needed (Phase 22).
+        original_geometry=body.original_geometry or (
+            geom if body.generated_by != GeneratedBy.HUMAN else None
+        ),
+        original_mask_rle=body.original_mask_rle or (
+            body.mask_rle if body.generated_by != GeneratedBy.HUMAN else None
+        ),
         created_by=user.id,
     )
     session.add(a)
@@ -188,9 +212,22 @@ def update_annotation(
         geom = dict(body.geometry)
         if a.geometry_type == GeometryType.OBB:
             geom["angle_rad"] = normalize_obb_angle(float(geom["angle_rad"]))
+        # A human editing a model-generated mask is the signal that powers
+        # AI acceptance/correction metrics, so record it once and keep the
+        # model's original geometry intact.
+        if a.generated_by != GeneratedBy.HUMAN and geom != a.geometry:
+            if a.original_geometry is None:
+                a.original_geometry = a.geometry
+            a.human_corrected = True
         a.geometry = geom
     if body.properties is not None:
         a.properties = _validate_properties(session, a.class_id, body.properties)
+    if body.mask_rle is not None:
+        if a.generated_by != GeneratedBy.HUMAN and a.original_mask_rle is None:
+            a.original_mask_rle = a.mask_rle
+        a.mask_rle = body.mask_rle
+    if body.human_verified is not None:
+        a.human_verified = body.human_verified
     session.add(a)
     session.commit()
     session.refresh(a)
