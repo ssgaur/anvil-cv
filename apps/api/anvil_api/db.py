@@ -144,6 +144,24 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_annotations_generated_by "
             "ON annotations(generated_by)"
         ))
+        # Normalise enum-typed columns to TEXT. A database created by an
+        # earlier create_all() may have native PG enums here (labels are
+        # UPPERCASE names), while a migrated one has TEXT with lowercase
+        # values. Converting makes both agree; it is a no-op once TEXT.
+        conn.execute(text(
+            "ALTER TABLE annotations ALTER COLUMN generated_by TYPE TEXT "
+            "USING lower(generated_by::text)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE annotations ALTER COLUMN generated_by SET DEFAULT 'human'"
+        ))
+        conn.execute(text(
+            "ALTER TABLE queries ALTER COLUMN status TYPE TEXT "
+            "USING lower(status::text)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE queries ALTER COLUMN status SET DEFAULT 'unannotated'"
+        ))
         # Backfill provenance for rows created before this column existed:
         # AnnotationSource.MODEL predates SAM3, so it can only have been SAM2.
         conn.execute(text(

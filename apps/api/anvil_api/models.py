@@ -342,7 +342,13 @@ class Annotation(SQLModel, table=True):
     mask_rle: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
 
     # ---- Provenance (Phase 22) ----
-    generated_by: GeneratedBy = Field(default=GeneratedBy.HUMAN, index=True)
+    # Stored as TEXT rather than a native PG enum: enums require ALTER TYPE to
+    # evolve, and create_all() vs ALTER TABLE would otherwise produce different
+    # column types on fresh vs migrated databases. Matches User.role.
+    generated_by: GeneratedBy = Field(
+        default=GeneratedBy.HUMAN,
+        sa_column=Column(String, nullable=False, server_default="human", index=True),
+    )
     model_name: str | None = Field(default=None, max_length=64)
     model_version_id: UUID | None = Field(default=None, index=True)
     model_score: float | None = None
@@ -405,7 +411,12 @@ class Query(SQLModel, table=True):
     # rewrite history for datasets already exported.
     text: str = Field(max_length=255)
 
-    status: QueryStatus = Field(default=QueryStatus.UNANNOTATED, index=True)
+    status: QueryStatus = Field(
+        default=QueryStatus.UNANNOTATED,
+        sa_column=Column(
+            String, nullable=False, server_default="unannotated", index=True
+        ),
+    )
     # True iff EVERY instance of this concept in this image is annotated.
     is_exhaustive: bool = Field(default=False)
     # True iff the masks cover all target pixels (not just some instances).
