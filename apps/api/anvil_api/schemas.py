@@ -257,6 +257,43 @@ class PredictOut(BaseModel):
     bbox: list[float]  # [x,y,w,h]
 
 
+# ---- SAM3 video inference showcase
+class ShowcaseVideoOut(BaseModel):
+    id: UUID
+    filename: str
+    bytes: int
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    duration_s: float | None = None
+    frame_count: int | None = None
+    codec: str | None = None
+    status: str
+    error: str | None = None
+    playback_url: str | None = None
+    poster_url: str | None = None
+    created_at: datetime
+
+
+class ShowcaseChatIn(BaseModel):
+    question: str = Field(min_length=2, max_length=1000)
+    current_time_s: float | None = Field(default=None, ge=0)
+
+
+class ShowcaseChatOut(BaseModel):
+    answer: str
+    confidence: str
+    caveat: str | None = None
+    grounding_concept: str | None = None
+    evidence_timestamp_s: float | None = None
+    evidence_url: str | None = None
+    detection_count: int = 0
+    detection_scores: list[float] = []
+    sampled_timestamps_s: list[float] = []
+    ollama_model: str
+    segmentation_model: str = "sam3"
+
+
 # ---- Model versions (fine-tuned adapters)
 class ModelVersionIn(BaseModel):
     name: str

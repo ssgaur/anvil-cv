@@ -284,6 +284,30 @@ class ModelVersion(SQLModel, table=True):
     completed_at: datetime | None = None
 
 
+class ShowcaseVideo(SQLModel, table=True):
+    """A local video prepared for the SAM3 inference showcase."""
+
+    __tablename__ = "showcase_videos"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    filename: str = Field(max_length=255)
+    source_key: str = Field(max_length=1000)
+    playback_key: str | None = Field(default=None, max_length=1000)
+    poster_key: str | None = Field(default=None, max_length=1000)
+    bytes: int = Field(default=0)
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    duration_s: float | None = None
+    frame_count: int | None = None
+    codec: str | None = Field(default=None, max_length=64)
+    # uploaded | preparing | ready | failed
+    status: str = Field(default="uploaded", index=True, max_length=32)
+    error: str | None = Field(default=None, max_length=2000)
+    uploaded_by: UUID | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Annotation(SQLModel, table=True):
     __tablename__ = "annotations"
 

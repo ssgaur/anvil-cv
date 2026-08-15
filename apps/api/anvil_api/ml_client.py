@@ -15,6 +15,7 @@ from anvil_api.config import settings
 class MLClient:
     def __init__(self, base_url: str | None = None) -> None:
         self.base = (base_url or settings.ml_service_url).rstrip("/")
+        self._internal_headers = {"X-Anvil-Internal": settings.ml_internal_token}
 
     async def health(self) -> dict[str, Any]:
         async with httpx.AsyncClient(base_url=self.base, timeout=120.0) as c:
@@ -94,6 +95,43 @@ class MLClient:
             r = await c.post(
                 "/evaluate",
                 json={"items": items, "adapter_path": adapter_path, "device": device},
+            )
+            r.raise_for_status()
+            return r.json()
+
+    async def showcase_ready(self) -> dict[str, Any]:
+        async with httpx.AsyncClient(base_url=self.base, timeout=30.0) as c:
+            r = await c.get("/showcase/ready")
+            r.raise_for_status()
+            return r.json()
+
+    async def prepare_video(self, video_id: str) -> dict[str, Any]:
+        async with httpx.AsyncClient(base_url=self.base, timeout=None) as c:
+            r = await c.post(
+                "/video/prepare",
+                json={"video_id": video_id},
+                headers=self._internal_headers,
+            )
+            r.raise_for_status()
+            return r.json()
+
+    async def video_chat(
+        self,
+        video_id: str,
+        question: str,
+        current_time_s: float | None,
+        evidence_id: str,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(base_url=self.base, timeout=None) as c:
+            r = await c.post(
+                "/video/chat",
+                json={
+                    "video_id": video_id,
+                    "question": question,
+                    "current_time_s": current_time_s,
+                    "evidence_id": evidence_id,
+                },
+                headers=self._internal_headers,
             )
             r.raise_for_status()
             return r.json()

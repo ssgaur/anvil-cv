@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import secrets
+import subprocess
 import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from anvil_ml import __version__
@@ -27,11 +31,27 @@ from anvil_ml.providers import (
     list_capabilities,
 )
 from anvil_ml.providers import release as release_provider
+from anvil_ml.video_showcase import (
+    prepare_video,
+    visual_chat,
+)
+from anvil_ml.video_showcase import (
+    showcase_ready as video_showcase_ready,
+)
 
 log = logging.getLogger("anvil.ml")
 
 # Warn before the kernel kills us; an OOM kill itself can never be logged.
 _MEMORY_WARN_PCT = 85.0
+_video_chat_gate = asyncio.Semaphore(1)
+
+
+def require_internal(
+    x_anvil_internal: str | None = Header(default=None),
+) -> None:
+    expected = os.getenv("ANVIL_ML_INTERNAL_TOKEN", "anvil-local-ml")
+    if not x_anvil_internal or not secrets.compare_digest(x_anvil_internal, expected):
+        raise HTTPException(403, "internal ML credentials required")
 
 
 @asynccontextmanager
@@ -138,6 +158,17 @@ class TrainRequest(BaseModel):
     device: str = "cpu"
 
 
+class PrepareVideoRequest(BaseModel):
+    video_id: str
+
+
+class VideoChatRequest(BaseModel):
+    video_id: str
+    question: str
+    current_time_s: float | None = None
+    evidence_id: str
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -146,6 +177,40 @@ def health() -> dict[str, Any]:
         "device": device_name(),
         **memory_report(),
     }
+
+
+@app.get("/showcase/ready")
+def showcase_ready_endpoint() -> dict[str, Any]:
+    return video_showcase_ready()
+
+
+@app.post("/video/prepare", dependencies=[Depends(require_internal)])
+async def prepare_video_endpoint(req: PrepareVideoRequest) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(prepare_video, req.video_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"missing video: {exc}") from exc
+    except (ValueError, subprocess.CalledProcessError) as exc:
+        raise HTTPException(400, f"video preparation failed: {exc}") from exc
+
+
+@app.post("/video/chat", dependencies=[Depends(require_internal)])
+async def video_chat_endpoint(req: VideoChatRequest) -> dict[str, Any]:
+    try:
+        # Serialize vision-chat work: SAM3 is a 3.5GB model and concurrent
+        # activations can OOM-kill a laptop-sized ML container.
+        async with _video_chat_gate:
+            return await asyncio.to_thread(
+                visual_chat,
+                req.video_id,
+                req.question,
+                req.current_time_s,
+                req.evidence_id,
+            )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"missing video: {exc}") from exc
+    except (ValueError, RuntimeError, httpx.HTTPError) as exc:
+        raise HTTPException(502, f"visual chat failed: {exc}") from exc
 
 
 @app.get("/capabilities")
