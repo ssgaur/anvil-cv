@@ -30,6 +30,7 @@ from anvil_api.routes import (
     projects,
     refresh,
     setup,
+    showcase,
 )
 
 
@@ -87,6 +88,7 @@ app.include_router(setup.router, prefix=API)
 app.include_router(refresh.router, prefix=API)
 app.include_router(password_reset.router, prefix=API)
 app.include_router(bulk.router, prefix=API)
+app.include_router(showcase.router, prefix=API)
 
 
 @app.get("/health")

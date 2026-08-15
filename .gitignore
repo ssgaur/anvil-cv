@@ -38,6 +38,7 @@ tmp/
 *.pt
 *.onnx
 *.npz
+/*.MOV
 
 # Frontend build & test artifacts
 apps/web/test-results/

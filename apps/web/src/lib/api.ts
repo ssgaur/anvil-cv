@@ -1,5 +1,8 @@
 import type {
-  AdminUser, Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, CompareResult, Dataset, ImageRow, KeypointSchema, ModelVersion, PredictResponse, Project, ReviewStatus, User, UserRole,
+  AdminUser, Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow,
+  CompareResult, Dataset, ImageRow, KeypointSchema, ModelVersion, PredictResponse,
+  Project, ReviewStatus, ShowcaseChatResult, ShowcaseRuntime, ShowcaseVideo, User,
+  UserRole,
 } from "../types";
 
 export type ImageSort =
@@ -140,6 +143,29 @@ export const api = {
   setToken,
   token,
   health: () => req<{ status: string; version: string }>("/health"),
+
+  // Local SAM3 + Ollama video showcase
+  showcaseRuntime: () => req<ShowcaseRuntime>("/api/showcase/runtime"),
+  listShowcaseVideos: () => req<ShowcaseVideo[]>("/api/showcase/videos"),
+  getShowcaseVideo: (id: string) =>
+    req<ShowcaseVideo>(`/api/showcase/videos/${id}`),
+  uploadShowcaseVideo: (file: File) =>
+    req<ShowcaseVideo>("/api/showcase/videos", {
+      method: "POST",
+      body: file,
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Filename": encodeURIComponent(file.name),
+      },
+    }),
+  deleteShowcaseVideo: (id: string) =>
+    req<void>(`/api/showcase/videos/${id}`, { method: "DELETE" }),
+  chatAboutShowcaseVideo: (
+    id: string, body: { question: string; current_time_s?: number | null },
+  ) =>
+    req<ShowcaseChatResult>(`/api/showcase/videos/${id}/chat`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
 
   // Auth
   login: async (email: string, password: string) => {

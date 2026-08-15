@@ -19,6 +19,18 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://anvil:anvil@localhost:5432/anvil"
     redis_url: str = "redis://localhost:6379/0"
     ml_service_url: str = "http://localhost:8001"
+    ml_internal_token: str = Field(
+        default="anvil-local-ml",
+        validation_alias=AliasChoices("ANVIL_ML_INTERNAL_TOKEN", "ml_internal_token"),
+    )
+    ollama_url: str = Field(
+        default="http://localhost:11434",
+        validation_alias=AliasChoices("OLLAMA_URL", "ollama_url"),
+    )
+    ollama_vision_model: str = Field(
+        default="gemma3:4b",
+        validation_alias=AliasChoices("OLLAMA_VISION_MODEL", "ollama_vision_model"),
+    )
 
     storage_provider: str = "local"
     storage_bucket: str = "anvil"

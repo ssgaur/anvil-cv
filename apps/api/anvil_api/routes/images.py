@@ -18,6 +18,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 from PIL import Image as PILImage
 from sqlmodel import Session, func, select
 
@@ -396,15 +397,17 @@ def serve_file(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "invalid or expired file signature")
     if not storage.exists(key):
         raise HTTPException(404, "not found")
-    data = storage.get(key)
-    # naive content-type
     ext = Path(key).suffix.lower()
     ctype = {
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png", ".webp": "image/webp", ".bmp": "image/bmp",
+        ".mp4": "video/mp4", ".mov": "video/quicktime",
         ".npz": "application/octet-stream",
     }.get(ext, "application/octet-stream")
-    return Response(content=data, media_type=ctype)
+    # FileResponse supports byte ranges, which browsers require for seeking
+    # through large videos. The old implementation loaded the whole file into
+    # API memory before sending it.
+    return FileResponse(storage.absolute_path(key), media_type=ctype)
 
 
 # --------- Predict (auto-annotate) ---------

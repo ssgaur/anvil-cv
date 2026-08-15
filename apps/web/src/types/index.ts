@@ -63,6 +63,44 @@ export interface CompareResult {
   n_annotations_evaluated: number;
 }
 
+export interface ShowcaseVideo {
+  id: string;
+  filename: string;
+  bytes: number;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  duration_s: number | null;
+  frame_count: number | null;
+  codec: string | null;
+  status: "uploaded" | "preparing" | "ready" | "failed";
+  error: string | null;
+  playback_url: string | null;
+  poster_url: string | null;
+  created_at: string;
+}
+
+export interface ShowcaseRuntime {
+  sam3: boolean;
+  ollama: boolean;
+  ollama_model: string;
+  ollama_models: string[];
+}
+
+export interface ShowcaseChatResult {
+  answer: string;
+  confidence: "high" | "medium" | "low";
+  caveat: string | null;
+  grounding_concept: string | null;
+  evidence_timestamp_s: number | null;
+  evidence_url: string | null;
+  detection_count: number;
+  detection_scores: number[];
+  sampled_timestamps_s: number[];
+  ollama_model: string;
+  segmentation_model: string;
+}
+
 export interface Dataset {
   id: string;
   project_id: string;

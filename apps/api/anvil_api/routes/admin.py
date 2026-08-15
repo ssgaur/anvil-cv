@@ -25,6 +25,7 @@ from anvil_api.models import (
     Comment,
     ModelVersion,
     Project,
+    ShowcaseVideo,
     User,
     UserOAuthIdentity,
     UserRole,
@@ -88,6 +89,11 @@ def _user_has_refs(session, user_id: UUID) -> dict[str, int]:
         ).one(),
         "model_versions": session.exec(
             select(func.count()).select_from(ModelVersion).where(ModelVersion.created_by == user_id)
+        ).one(),
+        "showcase_videos": session.exec(
+            select(func.count())
+            .select_from(ShowcaseVideo)
+            .where(ShowcaseVideo.uploaded_by == user_id)
         ).one(),
     }
 

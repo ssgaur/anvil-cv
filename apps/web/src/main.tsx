@@ -10,6 +10,7 @@ import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { DatasetDetailPage } from "./pages/DatasetDetailPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ModelShowcasePage } from "./pages/ModelShowcasePage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
@@ -42,6 +43,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route element={<Layout />}>
               <Route path="/" element={<Navigate to="/projects" replace />} />
               <Route path="/projects" element={<ProjectsPage />} />
+              <Route path="/model" element={<ModelShowcasePage />} />
               <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
               <Route
                 path="/projects/:projectId/datasets/:datasetId"
