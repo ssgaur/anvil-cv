@@ -101,3 +101,32 @@ behind the removed object—those pixels never existed in the source. ProPainter
 synthesizes that region; everything else retains source detail. The first
 release supports one selected object per derived export. Re-run from the
 original for another alternative edit; the original remains preserved.
+
+## Fault tolerance and resume
+
+Long jobs are checkpointed by stage:
+
+- source download and extracted working frames are reused;
+- SAM2 tracking commits masks and per-object boundary state after every bounded
+  chunk (60 frames by default), then releases the inference state;
+- ProPainter commits each temporal output chunk independently;
+- final encoding can restart from completed inpainted frames.
+
+Checkpoint files and manifests use atomic rename ordering. A crash can lose only
+the currently active chunk, not hours of completed chunks. On worker startup,
+jobs in `queued`, `running`, or `interrupted` state are automatically requeued.
+The UI job UUID remains the same.
+
+Fault-injection verification:
+
+1. interrupted SAM2 after a forward checkpoint at frame 48 of 61;
+2. restarted and verified it continued past frame 48 rather than resetting;
+3. interrupted ProPainter after chunk 1 of 7;
+4. restarted and verified chunk 1 was skipped (mtime unchanged) while chunk 2
+   was generated;
+5. resumed through a valid derived MP4.
+
+The original uncheckpointed 14-identity benchmark reached frame 2,219 before a
+forced Mac restart, but that in-memory progress cannot be recovered. Its
+selection and shadow input remain durable. New/restarted jobs use bounded
+checkpointed tracking.

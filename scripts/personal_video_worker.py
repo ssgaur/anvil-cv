@@ -43,7 +43,9 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parents[1]
 PERSONAL = ROOT / ".anvil-personal"
 PROPAINTER = PERSONAL / "ProPainter"
-JOBS_ROOT = PERSONAL / "jobs"
+JOBS_ROOT = Path(
+    os.getenv("ANVIL_PERSONAL_JOBS_ROOT", str(PERSONAL / "jobs"))
+).resolve()
 SAM2_CHECKPOINT = ROOT / "checkpoints" / "sam2.1_hiera_base_plus.pt"
 SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
 TOKEN = os.getenv("ANVIL_PERSONAL_WORKER_TOKEN", "anvil-personal-worker")
@@ -367,6 +369,130 @@ def _stabilize_tracked_masks(
     stable.replace(masks)
 
 
+def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps(payload))
+    temp.replace(path)
+
+
+def _load_boundary(path: Path) -> list[np.ndarray]:
+    if not path.is_file():
+        raise RuntimeError(f"tracking checkpoint is missing: {path.name}")
+    data = np.load(path, allow_pickle=False)
+    values = data["masks"]
+    return [values[index].astype(bool) for index in range(values.shape[0])]
+
+
+def _save_boundary(path: Path, masks: list[np.ndarray]) -> None:
+    temp = path.with_suffix(".tmp.npz")
+    np.savez_compressed(temp, masks=np.stack(masks).astype(np.uint8))
+    temp.replace(path)
+
+
+def _tracking_manifest(
+    root: Path,
+    *,
+    frame_count: int,
+    seed_idx: int,
+    object_count: int,
+    chunk_size: int,
+) -> dict[str, Any]:
+    path = root / "manifest.json"
+    if path.is_file():
+        manifest = json.loads(path.read_text())
+        expected = {
+            "version": 1,
+            "frame_count": frame_count,
+            "seed_idx": seed_idx,
+            "object_count": object_count,
+            "chunk_size": chunk_size,
+        }
+        for key, value in expected.items():
+            if manifest.get(key) != value:
+                raise RuntimeError(
+                    f"tracking checkpoint {key}={manifest.get(key)!r} "
+                    f"does not match current job {value!r}"
+                )
+        return manifest
+    manifest = {
+        "version": 1,
+        "frame_count": frame_count,
+        "seed_idx": seed_idx,
+        "object_count": object_count,
+        "chunk_size": chunk_size,
+        "forward_done_until": seed_idx,
+        "reverse_done_until": seed_idx,
+        "completed": False,
+        "stabilized": False,
+    }
+    _atomic_json(path, manifest)
+    return manifest
+
+
+def _link_frame_chunk(
+    frames: Path, chunk_root: Path, start: int, end: int
+) -> Path:
+    chunk_frames = chunk_root / "frames"
+    shutil.rmtree(chunk_root, ignore_errors=True)
+    chunk_frames.mkdir(parents=True)
+    for local_index, global_index in enumerate(range(start, end + 1)):
+        os.link(
+            frames / f"{global_index:05d}.jpg",
+            chunk_frames / f"{local_index:05d}.jpg",
+        )
+    return chunk_frames
+
+
+def _track_chunk(
+    predictor: Any,
+    chunk_frames: Path,
+    seed_local_idx: int,
+    seed_masks: list[np.ndarray],
+    reverse: bool,
+    cancel: threading.Event,
+) -> tuple[dict[int, np.ndarray], list[np.ndarray]]:
+    """Track one bounded chunk and return union masks + far-boundary objects."""
+    state = predictor.init_state(
+        video_path=str(chunk_frames),
+        offload_video_to_cpu=True,
+        offload_state_to_cpu=True,
+        async_loading_frames=True,
+    )
+    try:
+        for object_index, seed_mask in enumerate(seed_masks, start=1):
+            predictor.add_new_mask(
+                state,
+                frame_idx=seed_local_idx,
+                obj_id=object_index,
+                mask=seed_mask,
+            )
+        unions: dict[int, np.ndarray] = {}
+        boundary: list[np.ndarray] | None = None
+        boundary_index = 0 if reverse else len(list(chunk_frames.glob("*.jpg"))) - 1
+        for local_index, _obj_ids, logits in predictor.propagate_in_video(
+            state,
+            start_frame_idx=seed_local_idx,
+            reverse=reverse,
+        ):
+            if cancel.is_set():
+                raise RuntimeError("job cancelled")
+            individual = (
+                (logits > 0.0).squeeze(1).cpu().numpy().astype(np.uint8)
+            )
+            unions[local_index] = individual.any(axis=0).astype(np.uint8) * 255
+            if local_index == boundary_index:
+                boundary = [individual[index].astype(bool) for index in range(len(individual))]
+        if boundary is None:
+            raise RuntimeError("SAM2 did not produce the tracking chunk boundary")
+        return unions, boundary
+    finally:
+        predictor.reset_state(state)
+        del state
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+
 def _track_masks(
     job_id: str,
     body: RemovalJobIn,
@@ -405,68 +531,101 @@ def _track_masks(
     if len(seed_masks) > 40:
         raise ValueError("too many subject and shadow components (max 40)")
 
+    masks.mkdir(parents=True, exist_ok=True)
+    track_root = masks.parent / "tracking-checkpoints"
+    track_root.mkdir(exist_ok=True)
+    chunk_size = int(os.getenv("ANVIL_TRACK_CHUNK_FRAMES", "60"))
+    chunk_size = min(max(chunk_size, 10), 180)
+    manifest_path = track_root / "manifest.json"
+    manifest = _tracking_manifest(
+        track_root,
+        frame_count=len(names),
+        seed_idx=seed_idx,
+        object_count=len(seed_masks),
+        chunk_size=chunk_size,
+    )
+    if manifest.get("completed") and manifest.get("stabilized"):
+        return
+
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     predictor = build_sam2_video_predictor(
         SAM2_CONFIG, str(SAM2_CHECKPOINT), device=device
     )
-    state = predictor.init_state(
-        video_path=str(frames),
-        offload_video_to_cpu=True,
-        offload_state_to_cpu=True,
-        async_loading_frames=True,
-    )
-    for object_index, seed_mask in enumerate(seed_masks, start=1):
-        predictor.add_new_mask(
-            state,
-            frame_idx=seed_idx,
-            obj_id=object_index,
-            mask=seed_mask,
+    chunk_root = track_root / "active-chunk"
+
+    def update_progress(direction: str) -> None:
+        forward_done = int(manifest["forward_done_until"])
+        reverse_done = int(manifest["reverse_done_until"])
+        completed = (forward_done - seed_idx + 1) + (seed_idx - reverse_done)
+        _set(
+            job_id,
+            stage="tracking",
+            progress=min(0.42, 0.08 + 0.34 * completed / max(len(names), 1)),
+            detail=(
+                f"Checkpointed {direction} tracking: {completed}/{len(names)} frames "
+                f"({len(seed_masks)} identities, {chunk_size}-frame chunks)"
+            ),
         )
-    tracked: dict[int, np.ndarray] = {}
 
-    directions = ((False, seed_idx), (True, seed_idx))
-    completed = 0
-    expected = len(names) + seed_idx
-    for reverse, start in directions:
-        for frame_idx, _obj_ids, logits in predictor.propagate_in_video(
-            state, start_frame_idx=start, reverse=reverse
-        ):
-            if cancel.is_set():
-                raise RuntimeError("job cancelled")
-            tracked[frame_idx] = (
-                (logits > 0.0)
-                .any(dim=0)
-                .squeeze()
-                .cpu()
-                .numpy()
-                .astype(np.uint8)
-                * 255
-            )
-            completed += 1
-            _set(
-                job_id,
-                stage="tracking",
-                progress=min(0.42, 0.08 + 0.34 * completed / max(expected, 1)),
-                detail=(
-                    f"Tracking {len(seed_masks)} object(s): "
-                    f"{len(tracked)}/{len(names)} frames"
-                ),
-            )
+    # Forward from the selected frame to the end.
+    while int(manifest["forward_done_until"]) < len(names) - 1:
+        start = int(manifest["forward_done_until"])
+        end = min(len(names) - 1, start + chunk_size - 1)
+        current_seeds = (
+            seed_masks
+            if start == seed_idx
+            else _load_boundary(track_root / f"forward-{start:05d}.npz")
+        )
+        chunk_frames = _link_frame_chunk(frames, chunk_root, start, end)
+        unions, boundary = _track_chunk(
+            predictor, chunk_frames, 0, current_seeds, False, cancel
+        )
+        for local_index, union in unions.items():
+            cv2.imwrite(str(masks / f"{start + local_index:05d}.png"), union)
+        _save_boundary(track_root / f"forward-{end:05d}.npz", boundary)
+        manifest["forward_done_until"] = end
+        _atomic_json(manifest_path, manifest)
+        update_progress("forward")
+        shutil.rmtree(chunk_root, ignore_errors=True)
 
-    masks.mkdir(parents=True, exist_ok=True)
-    for index in range(len(names)):
-        mask = tracked.get(index)
-        if mask is None:
-            nearest = min(tracked, key=lambda value: abs(value - index))
-            mask = tracked[nearest]
-        Image.fromarray(mask).save(masks / f"{index:05d}.png")
+    # Reverse from the selected frame to the beginning.
+    while int(manifest["reverse_done_until"]) > 0:
+        end = int(manifest["reverse_done_until"])
+        start = max(0, end - chunk_size + 1)
+        current_seeds = (
+            seed_masks
+            if end == seed_idx
+            else _load_boundary(track_root / f"reverse-{end:05d}.npz")
+        )
+        chunk_frames = _link_frame_chunk(frames, chunk_root, start, end)
+        seed_local = end - start
+        unions, boundary = _track_chunk(
+            predictor, chunk_frames, seed_local, current_seeds, True, cancel
+        )
+        for local_index, union in unions.items():
+            cv2.imwrite(str(masks / f"{start + local_index:05d}.png"), union)
+        _save_boundary(track_root / f"reverse-{start:05d}.npz", boundary)
+        manifest["reverse_done_until"] = start
+        _atomic_json(manifest_path, manifest)
+        update_progress("reverse")
+        shutil.rmtree(chunk_root, ignore_errors=True)
 
-    predictor.reset_state(state)
-    del state, predictor
+    manifest["completed"] = True
+    _atomic_json(manifest_path, manifest)
+    shutil.rmtree(chunk_root, ignore_errors=True)
+    del predictor
     gc.collect()
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
+
+    if len(list(masks.glob("*.png"))) != len(names):
+        raise RuntimeError(
+            f"checkpointed tracking produced {len(list(masks.glob('*.png')))} "
+            f"masks for {len(names)} frames"
+        )
     _stabilize_tracked_masks(job_id, frames, masks, cancel)
+    manifest["stabilized"] = True
+    _atomic_json(manifest_path, manifest)
 
 
 def _run_propainter_chunks(
@@ -483,7 +642,10 @@ def _run_propainter_chunks(
     if total == 0:
         raise RuntimeError("no tracked frames to inpaint")
     output.mkdir(parents=True, exist_ok=True)
-    chunk_size = body.fps * 8
+    chunk_size = int(
+        os.getenv("ANVIL_INPAINT_CHUNK_FRAMES", str(body.fps * 8))
+    )
+    chunk_size = min(max(chunk_size, 10), body.fps * 12)
     overlap = max(6, body.fps // 2)
     starts = list(range(0, total, chunk_size))
 
@@ -491,12 +653,28 @@ def _run_propainter_chunks(
         if cancel.is_set():
             raise RuntimeError("job cancelled")
         central_end = min(total, central_start + chunk_size)
+        completed_outputs = [
+            output / f"{index:05d}.png"
+            for index in range(central_start, central_end)
+        ]
+        if all(path.is_file() for path in completed_outputs):
+            _set(
+                job_id,
+                stage="inpainting",
+                progress=0.43 + 0.39 * (chunk_number + 1) / len(starts),
+                detail=(
+                    f"Resumed after completed background chunk "
+                    f"{chunk_number + 1}/{len(starts)}"
+                ),
+            )
+            continue
         extended_start = max(0, central_start - overlap)
         extended_end = min(total, central_end + overlap)
         chunk_root = output.parent / f"chunk-{chunk_number:03d}"
         chunk_frames = chunk_root / "frames"
         chunk_masks = chunk_root / "masks"
         chunk_result = chunk_root / "result"
+        shutil.rmtree(chunk_root, ignore_errors=True)
         chunk_frames.mkdir(parents=True)
         chunk_masks.mkdir()
         chunk_result.mkdir()
@@ -721,47 +899,77 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
     masks = job / "masks"
     inpainted = job / "inpainted"
     cancel = _cancel_events.setdefault(job_id, threading.Event())
+    completed_successfully = False
     try:
         with _job_gate:
             if cancel.is_set():
                 return
-            for path in (source, frames, masks, inpainted, job / "removed.mp4"):
-                if path.is_dir():
-                    shutil.rmtree(path, ignore_errors=True)
-                else:
-                    path.unlink(missing_ok=True)
+            job.mkdir(parents=True, exist_ok=True)
+            (job / "removed.mp4").unlink(missing_ok=True)
             for stale_chunk in job.glob("chunk-*"):
                 shutil.rmtree(stale_chunk, ignore_errors=True)
-            frames.mkdir(parents=True)
-            masks.mkdir()
-            inpainted.mkdir()
-            _set(job_id, status="running", stage="downloading", progress=0.02)
-            _download(body.source_url, source)
+            masks.mkdir(exist_ok=True)
+            inpainted.mkdir(exist_ok=True)
+            if not source.is_file():
+                _set(job_id, status="running", stage="downloading", progress=0.02)
+                _download(body.source_url, source)
 
             duration = body.end_s - body.start_s
-            _set(job_id, stage="extracting", progress=0.04)
-            _run(
-                [
-                    "ffmpeg",
-                    "-loglevel",
-                    "error",
-                    "-y",
-                    "-ss",
-                    f"{body.start_s:.3f}",
-                    "-t",
-                    f"{duration:.3f}",
-                    "-i",
-                    str(source),
-                    "-vf",
-                    f"fps={body.fps},scale={body.width}:{body.height}",
-                    "-start_number",
-                    "0",
-                    "-q:v",
-                    "2",
-                    str(frames / "%05d.jpg"),
-                ],
-                cancel=cancel,
+            expected_frames = max(1, round(duration * body.fps))
+            existing_names = sorted(frames.glob("*.jpg")) if frames.is_dir() else []
+            existing_frames = len(existing_names)
+            contiguous = all(
+                path.stem == f"{index:05d}"
+                for index, path in enumerate(existing_names)
             )
+            # FFmpeg's fps filter can legitimately include one boundary frame,
+            # so a nominal N-frame duration may produce N+1 frames.
+            extraction_valid = (
+                existing_frames > 0
+                and contiguous
+                and abs(existing_frames - expected_frames) <= 2
+            )
+            if not extraction_valid:
+                shutil.rmtree(frames, ignore_errors=True)
+                shutil.rmtree(masks, ignore_errors=True)
+                shutil.rmtree(inpainted, ignore_errors=True)
+                shutil.rmtree(job / "tracking-checkpoints", ignore_errors=True)
+                frames.mkdir()
+                masks.mkdir()
+                inpainted.mkdir()
+                _set(job_id, status="running", stage="extracting", progress=0.04)
+                _run(
+                    [
+                        "ffmpeg",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-ss",
+                        f"{body.start_s:.3f}",
+                        "-t",
+                        f"{duration:.3f}",
+                        "-i",
+                        str(source),
+                        "-vf",
+                        f"fps={body.fps},scale={body.width}:{body.height}",
+                        "-start_number",
+                        "0",
+                        "-q:v",
+                        "2",
+                        str(frames / "%05d.jpg"),
+                    ],
+                    cancel=cancel,
+                )
+            else:
+                _set(
+                    job_id,
+                    status="running",
+                    stage="tracking",
+                    detail=(
+                        f"Resuming with {existing_frames} existing frames; "
+                        "loading tracking checkpoint"
+                    ),
+                )
 
             _set(job_id, stage="tracking", progress=0.08)
             _track_masks(job_id, body, frames, masks, cancel)
@@ -798,24 +1006,36 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
                 output_ready=True,
                 completed_at=time.time(),
             )
+            completed_successfully = True
     except Exception as exc:
         (job / "removed.mp4").unlink(missing_ok=True)
         if not cancel.is_set():
+            # Preserve every completed stage/chunk. A retry with the same job
+            # UUID resumes from manifests and existing frame outputs.
             _set(
                 job_id,
-                status="failed",
-                stage="failed",
+                status="interrupted",
+                stage="interrupted",
                 error=f"{type(exc).__name__}: {exc}"[:4000],
+                detail="Interrupted; restart the worker to resume from the latest checkpoint",
                 traceback=traceback.format_exc()[-8000:],
             )
     finally:
-        # Preserve only input/status and a successful output. Full source
-        # copies, frames, masks, and model intermediates are always disposable.
-        for path in (source, frames, masks, inpainted):
-            if path.is_dir():
-                shutil.rmtree(path, ignore_errors=True)
-            else:
-                path.unlink(missing_ok=True)
+        # Keep checkpoints and stage artifacts after interruption/failure so a
+        # later worker can resume. They become disposable only after a durable
+        # output exists or the user explicitly cancels.
+        if completed_successfully:
+            for path in (
+                source,
+                frames,
+                masks,
+                inpainted,
+                job / "tracking-checkpoints",
+            ):
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
         if cancel.is_set():
             shutil.rmtree(job, ignore_errors=True)
             with _jobs_lock:
@@ -830,7 +1050,7 @@ if __name__ == "__main__":
             job_id = str(row["id"])
             _jobs[job_id] = row
             _cancel_events[job_id] = threading.Event()
-            if row.get("status") in {"queued", "running"}:
+            if row.get("status") in {"queued", "running", "interrupted"}:
                 input_file = status_file.parent / "input.json"
                 if input_file.is_file():
                     body = RemovalJobIn.model_validate_json(input_file.read_text())
