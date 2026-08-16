@@ -21,6 +21,13 @@ function megabytes(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function pluralConcept(concept: string | undefined, count: number) {
+  if (!concept || count === 1) return concept ?? "object";
+  if (concept.toLowerCase() === "child") return "children";
+  if (concept.toLowerCase() === "person") return "people";
+  return concept.endsWith("s") ? concept : `${concept}s`;
+}
+
 function duration(seconds: number) {
   const total = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(total / 3600);
@@ -471,7 +478,8 @@ export function ModelShowcasePage() {
                       </span>
                       <span className="mt-1 block text-[10px] leading-4 text-neutral-500">
                         SAM3 does not detect illumination shadows. Enable this,
-                        then paint over each ground shadow in the video.
+                        then click-drag directly over every ground shadow on the
+                        paused video.
                       </span>
                     </span>
                   </label>
@@ -479,8 +487,8 @@ export function ModelShowcasePage() {
                     <div className="mt-2 flex items-center justify-between text-[10px]">
                       <span className={shadowMaskPng ? "text-emerald-300" : "text-amber-300"}>
                         {shadowMaskPng
-                          ? "Shadow brush recorded"
-                          : "Paint shadow regions directly on the paused frame"}
+                          ? "Shadow paint recorded — removal is ready"
+                          : "Required: paint shadows on the video to continue"}
                       </span>
                       <button
                         onClick={() => {
@@ -525,8 +533,9 @@ export function ModelShowcasePage() {
                     Remove through full video
                   </span>
                   <span className="mt-1 block text-[10px] leading-4 text-neutral-500">
-                    Keeps source duration, dimensions, frame rate and audio. A
-                    2-minute video may take 45–120 minutes on this Mac.
+                    Keeps source duration, dimensions, frame rate and audio.
+                    Six children plus shadows may take roughly 3–5 hours on
+                    this Mac at the precision setting.
                   </span>
                 </span>
               </label>
@@ -572,16 +581,24 @@ export function ModelShowcasePage() {
                   discovery.timestamp_s < clipStart ||
                   discovery.timestamp_s > clipEnd
                 }
-                className="w-full rounded-xl bg-rose-500 py-3 text-sm font-semibold text-white hover:bg-rose-400 disabled:bg-neutral-800 disabled:text-neutral-600"
+                title={
+                  removeShadows && !shadowMaskPng
+                    ? "Paint over the cast shadows on the paused video first"
+                    : undefined
+                }
+                className="sticky bottom-0 z-10 w-full rounded-xl bg-rose-500 py-3 text-sm font-semibold text-white shadow-[0_-12px_30px_#0b0e13] hover:bg-rose-400 disabled:bg-neutral-800 disabled:text-neutral-500"
               >
                 {submittingRemoval
                   ? "Starting removal…"
+                  : removeShadows && !shadowMaskPng
+                    ? "Paint shadows on the video to continue"
+                    : !propainterReady
+                      ? "Start the personal worker to continue"
                   : selected.length > 0
-                    ? `Remove ${selected.length} selected ${
-                        selected.length === 1
-                          ? discovery?.concept
-                          : `${discovery?.concept}s`
-                      }`
+                    ? `Remove ${selected.length} selected ${pluralConcept(
+                        discovery?.concept,
+                        selected.length,
+                      )}`
                     : "Select one or more objects to remove"}
               </button>
             )}
