@@ -36,6 +36,41 @@ open http://localhost:5173/model
 Keep the personal worker terminal open. It runs natively on macOS so PyTorch can
 use MPS; Docker on macOS cannot access MPS.
 
+### After a laptop restart
+
+Use the one-command launcher:
+
+```bash
+./scripts/start_personal_video_editor.sh
+```
+
+It starts Docker, waits for API/ML readiness, then runs the native worker under
+`caffeinate`. Heavy jobs never auto-resume after a worker or laptop restart.
+Open <http://localhost:5173/model>; the job appears as:
+
+> **Job interrupted — checkpoints are safe**
+
+Choose **Resume job** explicitly. The page may be reloaded or closed at any
+time; state, active compute time, stage progress and output history are loaded
+from the API/worker rather than browser memory.
+
+Running jobs provide both controls:
+
+- **Pause job** — stops at the current operation, keeps every committed tracking
+  and inpainting chunk, and releases model memory.
+- **Cancel** — abandons the job and deletes its native-worker artifacts.
+
+The stage dashboard reports:
+
+1. Prepare frames
+2. Track objects
+3. Stabilize masks
+4. Reconstruct background
+5. Encode final MP4
+
+The elapsed timer counts active compute only. Pauses, shutdown time and laptop
+downtime are excluded.
+
 ## Workflow
 
 1. Pause at a frame containing the target.
@@ -108,7 +143,8 @@ Long jobs are checkpointed by stage:
 
 - source download and extracted working frames are reused;
 - SAM2 tracking commits masks and per-object boundary state after every bounded
-  chunk (60 frames by default), then releases the inference state;
+  chunk (60 frames maximum; dynamically reduced to 30 frames for 14
+  identities), then releases the inference state;
 - ProPainter commits each temporal output chunk independently;
 - final encoding can restart from completed inpainted frames.
 
@@ -130,3 +166,13 @@ The original uncheckpointed 14-identity benchmark reached frame 2,219 before a
 forced Mac restart, but that in-memory progress cannot be recovered. Its
 selection and shadow input remain durable. New/restarted jobs use bounded
 checkpointed tracking.
+
+### Memory safety on M1 16GB
+
+- PyTorch MPS is limited to 60% of recommended device memory.
+- MPS high/low watermarks are 70%/50%, preferring a resumable job interruption
+  over system-wide memory exhaustion.
+- Only two decoded 1024×1024 SAM2 frames are cached.
+- Active tracking state is bounded by object×frame budget; 14 identities use
+  30-frame chunks.
+- Every chunk releases inference state and empties the MPS allocator cache.

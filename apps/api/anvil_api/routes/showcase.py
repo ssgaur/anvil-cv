@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import os
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 from uuid import UUID, uuid4
@@ -139,13 +138,6 @@ def _removal_out(job: ShowcaseRemovalJob) -> ShowcaseRemovalOut:
         if job.output_key and storage.exists(job.output_key)
         else None
     )
-    created_at = job.created_at
-    if created_at.tzinfo is not None:
-        created_at = created_at.astimezone(UTC).replace(tzinfo=None)
-    end_at = job.completed_at or datetime.now(UTC).replace(tzinfo=None)
-    if end_at.tzinfo is not None:
-        end_at = end_at.astimezone(UTC).replace(tzinfo=None)
-    elapsed_seconds = max(0.0, (end_at - created_at).total_seconds())
     return ShowcaseRemovalOut(
         id=job.id,
         video_id=job.video_id,
@@ -157,12 +149,67 @@ def _removal_out(job: ShowcaseRemovalJob) -> ShowcaseRemovalOut:
         stage=job.stage,
         progress=job.progress,
         detail=job.detail,
-        elapsed_seconds=elapsed_seconds,
+        elapsed_seconds=max(0.0, job.active_seconds),
         output_url=output_url,
         error=job.error,
         created_at=job.created_at,
         completed_at=job.completed_at,
     )
+
+
+async def _apply_remote_job(
+    session: Session,
+    job: ShowcaseRemovalJob,
+    remote: dict[str, object],
+    client: httpx.AsyncClient,
+    worker_base: str,
+) -> None:
+    lock = _import_locks.setdefault(job.id, asyncio.Lock())
+    async with lock:
+        session.refresh(job)
+        remote_status = str(remote["status"])
+        # Terminal database state is monotonic. A stale in-flight GET must not
+        # resurrect work after Cancel or overwrite an already imported output.
+        if job.status in {"cancelled", "completed"} and remote_status != job.status:
+            return
+        job.status = remote_status
+        job.stage = str(remote["stage"])
+        job.progress = float(remote["progress"])
+        job.active_seconds = float(remote.get("active_seconds") or job.active_seconds)
+        job.detail = remote.get("detail")  # type: ignore[assignment]
+        job.error = remote.get("error")  # type: ignore[assignment]
+        if job.status == "completed" and not job.output_key:
+            output_key = f"showcase/videos/{job.video_id}/edits/{job.id}.mp4"
+            output_path = Path(storage.absolute_path(output_key))
+            temp_path = output_path.with_suffix(f".{uuid4()}.tmp")
+            try:
+                async with client.stream(
+                    "GET",
+                    f"{worker_base}/jobs/{job.id}/output",
+                    headers=_PERSONAL_WORKER_HEADERS,
+                ) as download:
+                    download.raise_for_status()
+                    with temp_path.open("wb") as target:
+                        async for chunk in download.aiter_bytes():
+                            target.write(chunk)
+                os.replace(temp_path, output_path)
+            finally:
+                temp_path.unlink(missing_ok=True)
+            job.output_key = output_key
+            job.completed_at = utcnow()
+            # Persist the durable API-owned output before deleting the worker
+            # copy. A crash after this commit leaves harmless duplicate data;
+            # the reverse order could lose the only completed overnight result.
+            session.add(job)
+            session.commit()
+            with contextlib.suppress(httpx.HTTPError):
+                await client.delete(
+                    f"{worker_base}/jobs/{job.id}",
+                    headers=_PERSONAL_WORKER_HEADERS,
+                )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
 
 
 def _prepare_video(video_id: UUID) -> None:
@@ -440,16 +487,95 @@ async def get_removal(
         raise HTTPException(404, "removal job not found")
     if job.status in {"completed", "failed", "cancelled"}:
         return _removal_out(job)
-    worker_base, _health = await _personal_worker()
+    try:
+        worker_base, _health = await _personal_worker()
+    except HTTPException:
+        if job.status in {"queued", "running", "pausing"}:
+            job.status = "interrupted"
+            job.stage = "interrupted"
+            job.detail = (
+                "Personal worker is offline. Start it, then choose Resume job."
+            )
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+        return _removal_out(job)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{worker_base}/jobs/{job.id}", headers=_PERSONAL_WORKER_HEADERS
             )
             if response.status_code == 404:
-                video = session.get(ShowcaseVideo, job.video_id)
-                if not video:
-                    raise HTTPException(404, "source video no longer exists")
+                if job.status == "queued":
+                    video = session.get(ShowcaseVideo, job.video_id)
+                    if not video:
+                        raise HTTPException(404, "source video no longer exists")
+                    await _dispatch_removal(client, worker_base, job, video)
+                    response = await client.get(
+                        f"{worker_base}/jobs/{job.id}",
+                        headers=_PERSONAL_WORKER_HEADERS,
+                    )
+                else:
+                    job.status = "interrupted"
+                    job.stage = "interrupted"
+                    job.detail = "Worker has no active state. Choose Resume job."
+                    session.add(job)
+                    session.commit()
+                    session.refresh(job)
+                    return _removal_out(job)
+            response.raise_for_status()
+            remote = response.json()
+            await _apply_remote_job(session, job, remote, client, worker_base)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"personal worker unavailable: {exc}") from exc
+    return _removal_out(job)
+
+
+@router.post("/removals/{job_id}/pause", response_model=ShowcaseRemovalOut)
+async def pause_removal(
+    job_id: UUID, session: SessionDep, _user: RequireLabeler
+) -> ShowcaseRemovalOut:
+    job = session.get(ShowcaseRemovalJob, job_id)
+    if not job:
+        raise HTTPException(404, "removal job not found")
+    if job.status not in {"queued", "running", "pausing"}:
+        return _removal_out(job)
+    worker_base, _health = await _personal_worker()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                f"{worker_base}/jobs/{job.id}/pause",
+                headers=_PERSONAL_WORKER_HEADERS,
+            )
+            response.raise_for_status()
+            remote = response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"could not pause personal worker: {exc}") from exc
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        await _apply_remote_job(session, job, remote, client, worker_base)
+    return _removal_out(job)
+
+
+@router.post("/removals/{job_id}/resume", response_model=ShowcaseRemovalOut)
+async def resume_removal(
+    job_id: UUID, session: SessionDep, _user: RequireLabeler
+) -> ShowcaseRemovalOut:
+    job = session.get(ShowcaseRemovalJob, job_id)
+    if not job:
+        raise HTTPException(404, "removal job not found")
+    if job.status in {"completed", "cancelled"}:
+        return _removal_out(job)
+    video = session.get(ShowcaseVideo, job.video_id)
+    if not video:
+        raise HTTPException(404, "source video no longer exists")
+    worker_base, _health = await _personal_worker()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{worker_base}/jobs/{job.id}/resume",
+                headers=_PERSONAL_WORKER_HEADERS,
+            )
+            if response.status_code == 404:
                 await _dispatch_removal(client, worker_base, job, video)
                 response = await client.get(
                     f"{worker_base}/jobs/{job.id}",
@@ -457,50 +583,10 @@ async def get_removal(
                 )
             response.raise_for_status()
             remote = response.json()
-            job.status = str(remote["status"])
-            job.stage = str(remote["stage"])
-            job.progress = float(remote["progress"])
-            job.detail = remote.get("detail")
-            job.error = remote.get("error")
-            if job.status == "completed" and not job.output_key:
-                lock = _import_locks.setdefault(job.id, asyncio.Lock())
-                async with lock:
-                    session.refresh(job)
-                    if not job.output_key:
-                        output_key = (
-                            f"showcase/videos/{job.video_id}/edits/{job.id}.mp4"
-                        )
-                        output_path = Path(storage.absolute_path(output_key))
-                        temp_path = output_path.with_suffix(f".{uuid4()}.tmp")
-                        try:
-                            async with client.stream(
-                                "GET",
-                                f"{worker_base}/jobs/{job.id}/output",
-                                headers=_PERSONAL_WORKER_HEADERS,
-                            ) as download:
-                                download.raise_for_status()
-                                with temp_path.open("wb") as target:
-                                    async for chunk in download.aiter_bytes():
-                                        target.write(chunk)
-                            os.replace(temp_path, output_path)
-                        finally:
-                            temp_path.unlink(missing_ok=True)
-                        job.output_key = output_key
-                        job.completed_at = utcnow()
-                        session.add(job)
-                        session.commit()
-                        # API storage now owns the durable output; remove the
-                        # native worker copy and intermediates.
-                        with contextlib.suppress(httpx.HTTPError):
-                            await client.delete(
-                                f"{worker_base}/jobs/{job.id}",
-                                headers=_PERSONAL_WORKER_HEADERS,
-                            )
-            session.add(job)
-            session.commit()
-            session.refresh(job)
     except httpx.HTTPError as exc:
-        raise HTTPException(502, f"personal worker unavailable: {exc}") from exc
+        raise HTTPException(502, f"could not resume personal worker: {exc}") from exc
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        await _apply_remote_job(session, job, remote, client, worker_base)
     return _removal_out(job)
 
 
@@ -514,20 +600,23 @@ async def cancel_removal(
     job = session.get(ShowcaseRemovalJob, job_id)
     if not job:
         raise HTTPException(404, "removal job not found")
-    if job.status in {"queued", "running"}:
-        with contextlib.suppress(HTTPException, httpx.HTTPError):
-            worker_base, _health = await _personal_worker()
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                await client.delete(
-                    f"{worker_base}/jobs/{job.id}",
-                    headers=_PERSONAL_WORKER_HEADERS,
-                )
-        job.status = "cancelled"
-        job.stage = "cancelled"
-        job.detail = "Cancelled by user"
-        session.add(job)
-        session.commit()
+    lock = _import_locks.setdefault(job.id, asyncio.Lock())
+    async with lock:
         session.refresh(job)
+        if job.status in {"queued", "running", "pausing", "interrupted"}:
+            with contextlib.suppress(HTTPException, httpx.HTTPError):
+                worker_base, _health = await _personal_worker()
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.delete(
+                        f"{worker_base}/jobs/{job.id}",
+                        headers=_PERSONAL_WORKER_HEADERS,
+                    )
+            job.status = "cancelled"
+            job.stage = "cancelled"
+            job.detail = "Cancelled by user"
+            session.add(job)
+            session.commit()
+            session.refresh(job)
     return _removal_out(job)
 
 

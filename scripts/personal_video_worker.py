@@ -30,6 +30,11 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+# Prefer a controlled PyTorch OOM (which becomes a resumable interrupted job)
+# over allowing MPS to pressure the whole 16GB Mac into a forced shutdown.
+os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.70")
+os.environ.setdefault("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.50")
+
 import cv2
 import numpy as np
 import torch
@@ -55,6 +60,10 @@ _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
 _job_gate = threading.Semaphore(1)
 _cancel_events: dict[str, threading.Event] = {}
+_stop_modes: dict[str, str] = {}
+
+if torch.backends.mps.is_available():
+    torch.mps.set_per_process_memory_fraction(0.60)
 
 
 class RemovalJobIn(BaseModel):
@@ -79,17 +88,77 @@ def require_token(x_anvil_personal: str | None = Header(default=None)) -> None:
         raise HTTPException(403, "personal worker credentials required")
 
 
+def _persist_locked(job_id: str) -> None:
+    job_dir = JOBS_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    temp = job_dir / "status.json.tmp"
+    temp.write_text(json.dumps(_jobs[job_id]))
+    temp.replace(job_dir / "status.json")
+
+
 def _set(job_id: str, **values: Any) -> None:
     with _jobs_lock:
         event = _cancel_events.get(job_id)
         if event is not None and event.is_set():
             return
-        _jobs.setdefault(job_id, {}).update(values)
-        job_dir = JOBS_ROOT / job_id
-        job_dir.mkdir(parents=True, exist_ok=True)
-        temp = job_dir / "status.json.tmp"
-        temp.write_text(json.dumps(_jobs[job_id]))
-        temp.replace(job_dir / "status.json")
+        row = _jobs.setdefault(job_id, {})
+        row.update(values)
+        row["last_update_at"] = time.time()
+        _persist_locked(job_id)
+
+
+def _heartbeat(job_id: str, interval_s: float = 5.0) -> None:
+    with _jobs_lock:
+        row = _jobs.get(job_id)
+        if not row or row.get("status") not in {"running", "pausing"}:
+            return
+        now = time.time()
+        if now - float(row.get("last_update_at") or 0) < interval_s:
+            return
+        row["last_update_at"] = now
+        _persist_locked(job_id)
+
+
+def _start_attempt(job_id: str) -> None:
+    with _jobs_lock:
+        row = _jobs[job_id]
+        now = time.time()
+        row.setdefault("active_seconds", 0.0)
+        row["attempt_started_at"] = now
+        row["last_update_at"] = now
+        row["status"] = "running"
+        _persist_locked(job_id)
+
+
+def _finish_attempt(job_id: str) -> None:
+    with _jobs_lock:
+        row = _jobs.get(job_id)
+        if not row:
+            return
+        started = row.get("attempt_started_at")
+        if started is not None:
+            row["active_seconds"] = float(row.get("active_seconds") or 0) + max(
+                0.0, time.time() - float(started)
+            )
+        row["attempt_started_at"] = None
+        row["last_update_at"] = time.time()
+        _persist_locked(job_id)
+
+
+def _freeze_crashed_attempt(job_id: str) -> None:
+    """Count work only through the last heartbeat, excluding machine downtime."""
+    with _jobs_lock:
+        row = _jobs.get(job_id)
+        if not row:
+            return
+        started = row.get("attempt_started_at")
+        if started is not None:
+            ended = float(row.get("last_update_at") or started)
+            row["active_seconds"] = float(row.get("active_seconds") or 0) + max(
+                0.0, ended - float(started)
+            )
+        row["attempt_started_at"] = None
+        _persist_locked(job_id)
 
 
 def _status(job_id: str) -> dict[str, Any]:
@@ -102,7 +171,13 @@ def _status(job_id: str) -> dict[str, Any]:
                 _jobs[job_id] = row
         if not row:
             raise KeyError(job_id)
-        return dict(row)
+        result = dict(row)
+        started = result.get("attempt_started_at")
+        if started is not None and result.get("status") in {"running", "pausing"}:
+            result["active_seconds"] = float(result.get("active_seconds") or 0) + max(
+                0.0, time.time() - float(started)
+            )
+        return result
 
 
 def _check_install() -> tuple[bool, str | None]:
@@ -130,6 +205,9 @@ def health() -> dict[str, Any]:
         "personal_use_only": True,
         "max_clip_s": 600,
         "processing_size": [432, 240],
+        "resumable": True,
+        "tracking_checkpoint_max_frames": 60,
+        "mps_memory_fraction": 0.60,
     }
 
 
@@ -155,6 +233,9 @@ def create_job(body: RemovalJobIn) -> dict[str, Any]:
             "progress": 0.0,
             "error": None,
             "output_ready": False,
+            "active_seconds": 0.0,
+            "attempt_started_at": None,
+            "last_update_at": time.time(),
             "created_at": time.time(),
         }
         _cancel_events[job_id] = threading.Event()
@@ -196,6 +277,7 @@ def get_output(job_id: str) -> FileResponse:
 def delete_job(job_id: str) -> None:
     canonical = str(UUID(job_id))
     with _jobs_lock:
+        _stop_modes[canonical] = "cancel"
         _cancel_events.setdefault(canonical, threading.Event()).set()
         _jobs.pop(canonical, None)
     # The running thread owns cleanup; for an idle/completed job, clean now.
@@ -206,22 +288,128 @@ def delete_job(job_id: str) -> None:
         shutil.rmtree(JOBS_ROOT / canonical, ignore_errors=True)
         with _jobs_lock:
             _cancel_events.pop(canonical, None)
+            _stop_modes.pop(canonical, None)
+
+
+@app.post("/jobs/{job_id}/pause", dependencies=[Depends(require_token)])
+def pause_job(job_id: str) -> dict[str, Any]:
+    canonical = str(UUID(job_id))
+    with _jobs_lock:
+        row = _jobs.get(canonical)
+        if not row:
+            raise HTTPException(404, "job not found")
+        if row["status"] not in {"queued", "running"}:
+            return dict(row)
+        _stop_modes[canonical] = "pause"
+        _cancel_events.setdefault(canonical, threading.Event()).set()
+        _jobs[canonical].update(
+            status="pausing",
+            stage="pausing",
+            detail="Finishing the current operation and saving completed checkpoints",
+        )
+        _jobs[canonical]["last_update_at"] = time.time()
+        _persist_locked(canonical)
+    return _status(canonical)
+
+
+@app.post("/jobs/{job_id}/resume", dependencies=[Depends(require_token)])
+def resume_job(job_id: str) -> dict[str, Any]:
+    canonical = str(UUID(job_id))
+    input_file = JOBS_ROOT / canonical / "input.json"
+    if not input_file.is_file():
+        raise HTTPException(409, "durable job input is missing")
+    body = RemovalJobIn.model_validate_json(input_file.read_text())
+    should_spawn = False
+    with _jobs_lock:
+        row = _jobs.get(canonical)
+        if not row:
+            raise HTTPException(404, "job not found")
+        if row["status"] in {"queued", "running", "pausing", "completed"}:
+            return dict(row)
+        if any(
+            thread.name == f"removal-{canonical}" and thread.is_alive()
+            for thread in threading.enumerate()
+        ):
+            return dict(row)
+        _cancel_events[canonical] = threading.Event()
+        _stop_modes.pop(canonical, None)
+        row.update(
+            status="queued",
+            stage="queued",
+            error=None,
+            detail="Queued to resume from the latest durable checkpoint",
+            last_update_at=time.time(),
+        )
+        _persist_locked(canonical)
+        should_spawn = True
+    if should_spawn:
+        threading.Thread(
+            target=_run_job,
+            args=(canonical, body),
+            daemon=True,
+            name=f"removal-{canonical}",
+        ).start()
+    return _status(canonical)
 
 
 def _download(url: str, output: Path) -> None:
     if not url.startswith(("http://127.0.0.1:8000/", "http://localhost:8000/")):
         raise ValueError("source URL must be the local Anvil API")
-    with urllib.request.urlopen(url, timeout=600) as source, output.open("wb") as target:
-        shutil.copyfileobj(source, target)
+    temp = output.with_suffix(".downloading")
+    temp.unlink(missing_ok=True)
+    try:
+        with urllib.request.urlopen(url, timeout=600) as source, temp.open("wb") as target:
+            shutil.copyfileobj(source, target)
+        temp.replace(output)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _source_is_valid(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height:format=duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        return False
+    try:
+        payload = json.loads(result.stdout)
+        return (
+            float(payload["format"]["duration"]) > 0
+            and int(payload["streams"][0]["width"]) > 0
+            and int(payload["streams"][0]["height"]) > 0
+        )
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+        return False
 
 
 def _run(
-    cmd: list[str], *, cwd: Path | None = None, cancel: threading.Event | None = None
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    cancel: threading.Event | None = None,
+    job_id: str | None = None,
 ) -> None:
     process = subprocess.Popen(
         cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
     while process.poll() is None:
+        if job_id is not None:
+            _heartbeat(job_id)
         if cancel is not None and cancel.is_set():
             process.terminate()
             try:
@@ -405,7 +593,6 @@ def _tracking_manifest(
             "frame_count": frame_count,
             "seed_idx": seed_idx,
             "object_count": object_count,
-            "chunk_size": chunk_size,
         }
         for key, value in expected.items():
             if manifest.get(key) != value:
@@ -413,6 +600,11 @@ def _tracking_manifest(
                     f"tracking checkpoint {key}={manifest.get(key)!r} "
                     f"does not match current job {value!r}"
                 )
+        if manifest.get("chunk_size") != chunk_size:
+            # Boundaries are keyed by global cursor, so future chunks may safely
+            # use a smaller memory policy after restart.
+            manifest["chunk_size"] = chunk_size
+            _atomic_json(path, manifest)
         return manifest
     manifest = {
         "version": 1,
@@ -444,6 +636,7 @@ def _link_frame_chunk(
 
 
 def _track_chunk(
+    job_id: str,
     predictor: Any,
     chunk_frames: Path,
     seed_local_idx: int,
@@ -474,6 +667,7 @@ def _track_chunk(
             start_frame_idx=seed_local_idx,
             reverse=reverse,
         ):
+            _heartbeat(job_id)
             if cancel.is_set():
                 raise RuntimeError("job cancelled")
             individual = (
@@ -534,8 +728,13 @@ def _track_masks(
     masks.mkdir(parents=True, exist_ok=True)
     track_root = masks.parent / "tracking-checkpoints"
     track_root.mkdir(exist_ok=True)
-    chunk_size = int(os.getenv("ANVIL_TRACK_CHUNK_FRAMES", "60"))
-    chunk_size = min(max(chunk_size, 10), 180)
+    configured_chunk = int(os.getenv("ANVIL_TRACK_CHUNK_FRAMES", "60"))
+    configured_chunk = min(max(configured_chunk, 10), 180)
+    # SAM2 keeps per-object mask state for every frame in the active chunk.
+    # Bound object×frame state, so 14 identities use 30-frame chunks while a
+    # single identity can use the configured 60-frame maximum.
+    memory_safe_chunk = max(10, 420 // max(len(seed_masks), 1))
+    chunk_size = min(configured_chunk, memory_safe_chunk)
     manifest_path = track_root / "manifest.json"
     manifest = _tracking_manifest(
         track_root,
@@ -578,7 +777,7 @@ def _track_masks(
         )
         chunk_frames = _link_frame_chunk(frames, chunk_root, start, end)
         unions, boundary = _track_chunk(
-            predictor, chunk_frames, 0, current_seeds, False, cancel
+            job_id, predictor, chunk_frames, 0, current_seeds, False, cancel
         )
         for local_index, union in unions.items():
             cv2.imwrite(str(masks / f"{start + local_index:05d}.png"), union)
@@ -600,7 +799,7 @@ def _track_masks(
         chunk_frames = _link_frame_chunk(frames, chunk_root, start, end)
         seed_local = end - start
         unions, boundary = _track_chunk(
-            predictor, chunk_frames, seed_local, current_seeds, True, cancel
+            job_id, predictor, chunk_frames, seed_local, current_seeds, True, cancel
         )
         for local_index, union in unions.items():
             cv2.imwrite(str(masks / f"{start + local_index:05d}.png"), union)
@@ -642,6 +841,8 @@ def _run_propainter_chunks(
     if total == 0:
         raise RuntimeError("no tracked frames to inpaint")
     output.mkdir(parents=True, exist_ok=True)
+    markers = output / ".chunks"
+    markers.mkdir(exist_ok=True)
     chunk_size = int(
         os.getenv("ANVIL_INPAINT_CHUNK_FRAMES", str(body.fps * 8))
     )
@@ -657,7 +858,17 @@ def _run_propainter_chunks(
             output / f"{index:05d}.png"
             for index in range(central_start, central_end)
         ]
-        if all(path.is_file() for path in completed_outputs):
+        marker = markers / f"{chunk_number:03d}.json"
+        marker_payload = {
+            "chunk": chunk_number,
+            "central_start": central_start,
+            "central_end": central_end,
+            "frame_count": central_end - central_start,
+        }
+        marker_valid = False
+        with contextlib.suppress(OSError, ValueError, json.JSONDecodeError):
+            marker_valid = json.loads(marker.read_text()) == marker_payload
+        if marker_valid and all(path.is_file() for path in completed_outputs):
             _set(
                 job_id,
                 stage="inpainting",
@@ -714,6 +925,7 @@ def _run_propainter_chunks(
                 ],
                 cwd=PROPAINTER,
                 cancel=cancel,
+                job_id=job_id,
             )
             generated = chunk_result / chunk_frames.name / "frames"
             if not generated.is_dir():
@@ -723,7 +935,11 @@ def _run_propainter_chunks(
                 source = generated / f"{local_index:04d}.png"
                 if not source.is_file():
                     raise RuntimeError(f"missing ProPainter frame {source.name}")
-                shutil.copyfile(source, output / f"{global_index:05d}.png")
+                destination = output / f"{global_index:05d}.png"
+                temp_destination = destination.with_suffix(".tmp")
+                shutil.copyfile(source, temp_destination)
+                temp_destination.replace(destination)
+            _atomic_json(marker, marker_payload)
         finally:
             shutil.rmtree(chunk_root, ignore_errors=True)
         _set(
@@ -838,6 +1054,7 @@ def _render_source_quality(
         assert process.stdin is not None
         written = 0
         for output_index in range(total_output):
+            _heartbeat(job_id)
             if cancel.is_set():
                 raise RuntimeError("job cancelled")
             ok, original = capture.read()
@@ -904,13 +1121,16 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
         with _job_gate:
             if cancel.is_set():
                 return
+            _start_attempt(job_id)
             job.mkdir(parents=True, exist_ok=True)
             (job / "removed.mp4").unlink(missing_ok=True)
             for stale_chunk in job.glob("chunk-*"):
                 shutil.rmtree(stale_chunk, ignore_errors=True)
+            shutil.rmtree(job / "frames.extracting", ignore_errors=True)
             masks.mkdir(exist_ok=True)
             inpainted.mkdir(exist_ok=True)
-            if not source.is_file():
+            if not _source_is_valid(source):
+                source.unlink(missing_ok=True)
                 _set(job_id, status="running", stage="downloading", progress=0.02)
                 _download(body.source_url, source)
 
@@ -922,19 +1142,34 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
                 path.stem == f"{index:05d}"
                 for index, path in enumerate(existing_names)
             )
-            # FFmpeg's fps filter can legitimately include one boundary frame,
-            # so a nominal N-frame duration may produce N+1 frames.
+            extraction_manifest = frames / "extraction.json"
+            extraction_meta: dict[str, Any] = {}
+            with contextlib.suppress(OSError, ValueError, json.JSONDecodeError):
+                extraction_meta = json.loads(extraction_manifest.read_text())
+            # Never infer extraction completion from file count alone. The
+            # manifest is written only after ffmpeg exits successfully.
             extraction_valid = (
                 existing_frames > 0
                 and contiguous
                 and abs(existing_frames - expected_frames) <= 2
+                and extraction_meta
+                == {
+                    "start_s": body.start_s,
+                    "end_s": body.end_s,
+                    "fps": body.fps,
+                    "width": body.width,
+                    "height": body.height,
+                    "frame_count": existing_frames,
+                }
             )
             if not extraction_valid:
                 shutil.rmtree(frames, ignore_errors=True)
                 shutil.rmtree(masks, ignore_errors=True)
                 shutil.rmtree(inpainted, ignore_errors=True)
                 shutil.rmtree(job / "tracking-checkpoints", ignore_errors=True)
-                frames.mkdir()
+                temp_frames = job / "frames.extracting"
+                shutil.rmtree(temp_frames, ignore_errors=True)
+                temp_frames.mkdir()
                 masks.mkdir()
                 inpainted.mkdir()
                 _set(job_id, status="running", stage="extracting", progress=0.04)
@@ -956,10 +1191,30 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
                         "0",
                         "-q:v",
                         "2",
-                        str(frames / "%05d.jpg"),
+                        str(temp_frames / "%05d.jpg"),
                     ],
                     cancel=cancel,
+                    job_id=job_id,
                 )
+                extracted = len(list(temp_frames.glob("*.jpg")))
+                if extracted <= 0 or abs(extracted - expected_frames) > 2:
+                    raise RuntimeError(
+                        f"ffmpeg extracted {extracted} frames; expected about "
+                        f"{expected_frames}"
+                    )
+                _atomic_json(
+                    temp_frames / "extraction.json",
+                    {
+                        "start_s": body.start_s,
+                        "end_s": body.end_s,
+                        "fps": body.fps,
+                        "width": body.width,
+                        "height": body.height,
+                        "frame_count": extracted,
+                    },
+                )
+                temp_frames.replace(frames)
+                existing_frames = extracted
             else:
                 _set(
                     job_id,
@@ -1006,10 +1261,12 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
                 output_ready=True,
                 completed_at=time.time(),
             )
+            _finish_attempt(job_id)
             completed_successfully = True
     except Exception as exc:
         (job / "removed.mp4").unlink(missing_ok=True)
         if not cancel.is_set():
+            _finish_attempt(job_id)
             # Preserve every completed stage/chunk. A retry with the same job
             # UUID resumes from manifests and existing frame outputs.
             _set(
@@ -1031,15 +1288,30 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
                 masks,
                 inpainted,
                 job / "tracking-checkpoints",
+                job / "frames.extracting",
             ):
                 if path.is_dir():
                     shutil.rmtree(path, ignore_errors=True)
                 else:
                     path.unlink(missing_ok=True)
-        if cancel.is_set():
+        mode = _stop_modes.get(job_id)
+        if cancel.is_set() and mode == "cancel":
             shutil.rmtree(job, ignore_errors=True)
             with _jobs_lock:
                 _cancel_events.pop(job_id, None)
+                _stop_modes.pop(job_id, None)
+        elif cancel.is_set() and mode == "pause":
+            with _jobs_lock:
+                _cancel_events[job_id] = threading.Event()
+                _stop_modes.pop(job_id, None)
+            _finish_attempt(job_id)
+            _set(
+                job_id,
+                status="interrupted",
+                stage="paused",
+                detail="Paused safely; completed chunks are preserved",
+                error=None,
+            )
 
 
 if __name__ == "__main__":
@@ -1050,23 +1322,18 @@ if __name__ == "__main__":
             job_id = str(row["id"])
             _jobs[job_id] = row
             _cancel_events[job_id] = threading.Event()
-            if row.get("status") in {"queued", "running", "interrupted"}:
-                input_file = status_file.parent / "input.json"
-                if input_file.is_file():
-                    body = RemovalJobIn.model_validate_json(input_file.read_text())
-                    threading.Thread(
-                        target=_run_job,
-                        args=(job_id, body),
-                        daemon=True,
-                        name=f"removal-{job_id}",
-                    ).start()
-                else:
-                    _set(
-                        job_id,
-                        status="failed",
-                        stage="failed",
-                        error="worker restarted but durable job input is missing",
-                    )
+            if row.get("status") in {"queued", "running", "pausing"}:
+                _freeze_crashed_attempt(job_id)
+                _set(
+                    job_id,
+                    status="interrupted",
+                    stage="interrupted",
+                    detail=(
+                        "Worker restarted; completed chunks are safe. "
+                        "Resume explicitly from the UI."
+                    ),
+                    error=None,
+                )
     uvicorn.run(
         app,
         host="127.0.0.1",

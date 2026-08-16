@@ -108,19 +108,35 @@ export function ModelShowcasePage() {
     setError(null);
     if (activeId) {
       api.listShowcaseRemovals(activeId)
-        .then((jobs) =>
-          setRemoval(
-            jobs.find((job) => ["queued", "running"].includes(job.status)) ??
+        .then(async (jobs) => {
+          const candidate =
+            jobs.find((job) =>
+              ["queued", "running", "pausing", "interrupted"].includes(job.status),
+            ) ??
               jobs.find((job) => job.status === "completed") ??
-              null,
-          ),
-        )
+              null;
+          if (
+            candidate &&
+            !["completed", "failed", "cancelled"].includes(candidate.status)
+          ) {
+            try {
+              setRemoval(await api.getShowcaseRemoval(candidate.id));
+              return;
+            } catch {
+              // Keep the persisted row; runtime polling will show worker state.
+            }
+          }
+          setRemoval(candidate);
+        })
         .catch(() => undefined);
     }
   }, [activeId]);
 
   useEffect(() => {
-    if (!removal || ["completed", "failed", "cancelled"].includes(removal.status)) return;
+    if (
+      !removal ||
+      ["completed", "failed", "cancelled", "interrupted"].includes(removal.status)
+    ) return;
     const timer = window.setInterval(async () => {
       try {
         const updated = await api.getShowcaseRemoval(removal.id);
@@ -131,6 +147,16 @@ export function ModelShowcasePage() {
     }, 2500);
     return () => window.clearInterval(timer);
   }, [removal]);
+
+  useEffect(() => {
+    if (removal?.status !== "interrupted") return;
+    const refresh = () => {
+      api.showcaseRuntime().then(setRuntime).catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [removal?.status]);
 
   useEffect(() => {
     if (!fullVideo || active?.duration_s == null) return;
@@ -606,6 +632,14 @@ export function ModelShowcasePage() {
             {removal && (
               <RemovalProgress
                 removal={removal}
+                workerReady={propainterReady}
+                onPause={async () => {
+                  setRemoval(await api.pauseShowcaseRemoval(removal.id));
+                }}
+                onResume={async () => {
+                  setRemoval(await api.resumeShowcaseRemoval(removal.id));
+                  setError(null);
+                }}
                 onCancel={async () => {
                   await api.cancelShowcaseRemoval(removal.id);
                   setRemoval(null);
@@ -764,16 +798,23 @@ function contentRect(width: number, height: number) {
 
 function RemovalProgress({
   removal,
+  workerReady,
+  onPause,
+  onResume,
   onCancel,
 }: {
   removal: ShowcaseRemoval;
+  workerReady: boolean;
+  onPause: () => Promise<void>;
+  onResume: () => Promise<void>;
   onCancel: () => Promise<void>;
 }) {
   const percent = Math.round(removal.progress * 100);
   const [elapsed, setElapsed] = useState(removal.elapsed_seconds);
+  const [actionBusy, setActionBusy] = useState(false);
   useEffect(() => {
     setElapsed(removal.elapsed_seconds);
-    if (["completed", "failed", "cancelled"].includes(removal.status)) return;
+    if (!["running", "pausing"].includes(removal.status)) return;
     const baseline = removal.elapsed_seconds;
     const started = Date.now();
     const timer = window.setInterval(() => {
@@ -803,6 +844,46 @@ function RemovalProgress({
             </a>
           )}
         </>
+      ) : removal.status === "interrupted" ? (
+        <>
+          <div className="text-sm font-semibold text-amber-300">
+            Job interrupted — checkpoints are safe
+          </div>
+          <div className="mt-1 text-xs leading-5 text-neutral-500">
+            {removal.detail ??
+              "Start the personal worker, then resume from the latest completed chunk."}
+          </div>
+          <div className="mt-2 text-xs text-neutral-400">
+            Active compute time: {duration(elapsed)} · {percent}% complete
+          </div>
+          <StageChecklist stage={removal.stage} progress={removal.progress} />
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={async () => {
+                setActionBusy(true);
+                try {
+                  await onResume();
+                } finally {
+                  setActionBusy(false);
+                }
+              }}
+              disabled={!workerReady || actionBusy}
+              className="flex-1 rounded-lg bg-rose-500 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-400 disabled:bg-neutral-800 disabled:text-neutral-600"
+            >
+              {actionBusy
+                ? "Resuming…"
+                : workerReady
+                  ? "Resume job"
+                  : "Start worker to resume"}
+            </button>
+            <button
+              onClick={() => void onCancel()}
+              className="rounded-lg border border-white/10 px-3 py-2 text-xs text-neutral-400"
+            >
+              Cancel
+            </button>
+          </div>
+        </>
       ) : removal.status === "failed" || removal.status === "cancelled" ? (
         <>
           <div className="text-sm font-semibold text-rose-300">
@@ -827,14 +908,88 @@ function RemovalProgress({
           <div className="mt-2 text-[10px] leading-4 text-neutral-500">
             {removal.detail ?? "Queued on the local MPS worker"}
           </div>
-          <button
-            onClick={() => void onCancel()}
-            className="mt-3 rounded-lg border border-rose-400/20 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-400/10"
-          >
-            Cancel job
-          </button>
+          <StageChecklist stage={removal.stage} progress={removal.progress} />
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={async () => {
+                setActionBusy(true);
+                try {
+                  await onPause();
+                } finally {
+                  setActionBusy(false);
+                }
+              }}
+              disabled={removal.status === "pausing" || actionBusy}
+              className="flex-1 rounded-lg border border-amber-400/20 px-3 py-1.5 text-xs text-amber-300 hover:bg-amber-400/10 disabled:opacity-50"
+            >
+              {removal.status === "pausing" ? "Pausing safely…" : "Pause job"}
+            </button>
+            <button
+              onClick={() => void onCancel()}
+              className="rounded-lg border border-rose-400/20 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-400/10"
+            >
+              Cancel
+            </button>
+          </div>
         </>
       )}
+    </div>
+  );
+}
+
+const EDIT_STAGES = [
+  ["extracting", "Prepare frames"],
+  ["tracking", "Track objects"],
+  ["stabilizing", "Stabilize masks"],
+  ["inpainting", "Reconstruct background"],
+  ["encoding", "Encode final MP4"],
+] as const;
+
+function StageChecklist({ stage, progress }: { stage: string; progress: number }) {
+  const checkpointIndex =
+    progress < 0.08
+      ? 0
+      : progress < 0.42
+        ? 1
+        : progress < 0.48
+          ? 2
+          : progress < 0.83
+            ? 3
+            : 4;
+  const aliases: Record<string, number> = {
+    downloading: 0,
+    extracting: 0,
+    tracking: 1,
+    pausing: checkpointIndex,
+    paused: checkpointIndex,
+    interrupted: checkpointIndex,
+    stabilizing: 2,
+    inpainting: 3,
+    encoding: 4,
+    completed: 5,
+  };
+  const activeIndex = aliases[stage] ?? 0;
+  return (
+    <div className="mt-3 space-y-1 rounded-lg bg-black/20 p-2.5">
+      {EDIT_STAGES.map(([key, label], index) => {
+        const complete = index < activeIndex || stage === "completed";
+        const active = index === activeIndex && !complete;
+        return (
+          <div
+            key={key}
+            className={`flex items-center gap-2 text-[10px] ${
+              complete
+                ? "text-emerald-400"
+                : active
+                  ? "text-neutral-200"
+                  : "text-neutral-600"
+            }`}
+          >
+            <span>{complete ? "✓" : active ? "●" : "○"}</span>
+            <span>{label}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

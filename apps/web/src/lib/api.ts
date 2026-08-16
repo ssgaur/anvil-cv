@@ -185,6 +185,10 @@ export const api = {
     }),
   getShowcaseRemoval: (id: string) =>
     req<ShowcaseRemoval>(`/api/showcase/removals/${id}`),
+  pauseShowcaseRemoval: (id: string) =>
+    req<ShowcaseRemoval>(`/api/showcase/removals/${id}/pause`, { method: "POST" }),
+  resumeShowcaseRemoval: (id: string) =>
+    req<ShowcaseRemoval>(`/api/showcase/removals/${id}/resume`, { method: "POST" }),
   cancelShowcaseRemoval: (id: string) =>
     req<ShowcaseRemoval>(`/api/showcase/removals/${id}`, { method: "DELETE" }),
   listShowcaseRemovals: (videoId: string) =>
