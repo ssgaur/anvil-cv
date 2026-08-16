@@ -1,33 +1,106 @@
-"""SAM3 video showcase: local playback plus visual question answering.
-
-This intentionally creates no annotations or training data. It is a focused
-inference experience that combines a local Ollama vision model for language
-reasoning with SAM3 for mask-level visual grounding.
-"""
+"""SAM3 object discovery and personal-use video removal."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from anvil_api.auth import RequireAnyAuthed, RequireLabeler, SessionDep
+from anvil_api.config import settings
 from anvil_api.db import engine
 from anvil_api.ml_client import ml_client
-from anvil_api.models import ShowcaseVideo
-from anvil_api.schemas import ShowcaseChatIn, ShowcaseChatOut, ShowcaseVideoOut
+from anvil_api.models import ShowcaseRemovalJob, ShowcaseVideo, utcnow
+from anvil_api.schemas import (
+    ShowcaseDiscoverIn,
+    ShowcaseDiscoverOut,
+    ShowcaseRemovalIn,
+    ShowcaseRemovalOut,
+    ShowcaseVideoOut,
+)
 from anvil_api.storage import storage
 
 router = APIRouter(prefix="/showcase", tags=["showcase"])
 
 _ALLOWED_VIDEO_EXTS = {".mov", ".mp4", ".m4v", ".avi", ".webm"}
 _MAX_VIDEO_BYTES = 1024 * 1024 * 1024
+_PERSONAL_WORKER_HEADERS = {
+    "X-Anvil-Personal": settings.personal_video_worker_token
+}
+_import_locks: dict[UUID, asyncio.Lock] = {}
+
+
+async def _personal_worker() -> tuple[str, dict[str, object]]:
+    configured = settings.personal_video_worker_url.rstrip("/")
+    candidates = (
+        [configured]
+        if configured and configured != "auto"
+        else [
+            "http://host.docker.internal:8002",
+            "http://host.rancher-desktop.internal:8002",
+        ]
+    )
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for base in candidates:
+            try:
+                response = await client.get(f"{base}/health")
+                response.raise_for_status()
+                health = response.json()
+                if health.get("propainter"):
+                    return base, health
+            except (httpx.HTTPError, ValueError):
+                continue
+    raise HTTPException(
+        503,
+        "Personal ProPainter worker is not running. Start: "
+        "python3 scripts/personal_video_worker.py",
+    )
+
+
+async def _dispatch_removal(
+    client: httpx.AsyncClient,
+    worker_base: str,
+    job: ShowcaseRemovalJob,
+    video: ShowcaseVideo,
+) -> None:
+    objects = job.mask_rle.get("objects")
+    if not isinstance(objects, list) or not objects:
+        raise HTTPException(409, "removal job has no stored object masks")
+    source_url = (
+        "http://127.0.0.1:8000"
+        + storage.signed_url(video.source_key, expires_seconds=30 * 24 * 3600)
+    )
+    response = await client.post(
+        f"{worker_base}/jobs",
+        headers=_PERSONAL_WORKER_HEADERS,
+        json={
+            "job_id": str(job.id),
+            "source_url": source_url,
+            "start_s": job.start_s,
+            "end_s": job.end_s,
+            "seed_s": job.seed_s,
+            "mask_rles": objects,
+            "source_width": video.width,
+            "source_height": video.height,
+            "fps": 15,
+            "width": 432,
+            "height": 240,
+        },
+    )
+    # 409 means a previous ambiguous request was accepted; dispatch is
+    # intentionally idempotent by job UUID.
+    if response.status_code != 409:
+        response.raise_for_status()
 
 
 def _video_out(video: ShowcaseVideo) -> ShowcaseVideoOut:
@@ -56,6 +129,38 @@ def _video_out(video: ShowcaseVideo) -> ShowcaseVideoOut:
         playback_url=playback_url,
         poster_url=poster_url,
         created_at=video.created_at,
+    )
+
+
+def _removal_out(job: ShowcaseRemovalJob) -> ShowcaseRemovalOut:
+    output_url = (
+        storage.signed_url(job.output_key, expires_seconds=8 * 3600)
+        if job.output_key and storage.exists(job.output_key)
+        else None
+    )
+    created_at = job.created_at
+    if created_at.tzinfo is not None:
+        created_at = created_at.astimezone(UTC).replace(tzinfo=None)
+    end_at = job.completed_at or datetime.now(UTC).replace(tzinfo=None)
+    if end_at.tzinfo is not None:
+        end_at = end_at.astimezone(UTC).replace(tzinfo=None)
+    elapsed_seconds = max(0.0, (end_at - created_at).total_seconds())
+    return ShowcaseRemovalOut(
+        id=job.id,
+        video_id=job.video_id,
+        concept=job.concept,
+        start_s=job.start_s,
+        end_s=job.end_s,
+        seed_s=job.seed_s,
+        status=job.status,
+        stage=job.stage,
+        progress=job.progress,
+        detail=job.detail,
+        elapsed_seconds=elapsed_seconds,
+        output_url=output_url,
+        error=job.error,
+        created_at=job.created_at,
+        completed_at=job.completed_at,
     )
 
 
@@ -89,23 +194,19 @@ def _prepare_video(video_id: UUID) -> None:
 
 @router.get("/runtime")
 async def showcase_runtime(_user: RequireAnyAuthed) -> dict[str, object]:
-    """Report whether the two local inference engines are available."""
+    """Report whether SAM3 and the personal removal backend are available."""
     ml_ok = False
-    ollama_ok = False
-    ollama_models: list[str] = []
     try:
         readiness = await ml_client.showcase_ready()
         ml_ok = bool(readiness.get("sam3") and readiness.get("ffmpeg"))
-        ollama_ok = bool(readiness.get("ollama"))
-        ollama_models = list(readiness.get("ollama_models") or [])
-        ollama_model = str(readiness.get("ollama_model") or "gemma3:4b")
     except Exception:
-        ollama_model = "gemma3:4b"
+        pass
+    personal_worker: dict[str, object] | None = None
+    with contextlib.suppress(HTTPException):
+        _base, personal_worker = await _personal_worker()
     return {
         "sam3": ml_ok,
-        "ollama": ollama_ok,
-        "ollama_model": ollama_model,
-        "ollama_models": ollama_models,
+        "personal_worker": personal_worker,
     }
 
 
@@ -215,44 +316,228 @@ def delete_showcase_video(
         session.add(video)
         session.commit()
         raise HTTPException(500, video.error) from exc
+    jobs = session.exec(
+        select(ShowcaseRemovalJob).where(ShowcaseRemovalJob.video_id == video.id)
+    ).all()
+    with contextlib.suppress(HTTPException, httpx.HTTPError):
+        worker_base, _health = asyncio.run(_personal_worker())
+        with httpx.Client(timeout=5.0) as client:
+            for job in jobs:
+                with contextlib.suppress(httpx.HTTPError):
+                    client.delete(
+                        f"{worker_base}/jobs/{job.id}",
+                        headers=_PERSONAL_WORKER_HEADERS,
+                    )
+    for job in jobs:
+        session.delete(job)
     session.delete(video)
     session.commit()
 
 
-@router.post("/videos/{video_id}/chat", response_model=ShowcaseChatOut)
-async def chat_about_video(
+@router.post(
+    "/videos/{video_id}/discover", response_model=ShowcaseDiscoverOut
+)
+async def discover_video_objects(
     video_id: UUID,
-    body: ShowcaseChatIn,
+    body: ShowcaseDiscoverIn,
     session: SessionDep,
     _user: RequireAnyAuthed,
-) -> ShowcaseChatOut:
+) -> ShowcaseDiscoverOut:
+    video = session.get(ShowcaseVideo, video_id)
+    if not video:
+        raise HTTPException(404, "showcase video not found")
+    if video.status != "ready":
+        raise HTTPException(409, f"video is not ready (status={video.status})")
+    if video.duration_s is not None and body.timestamp_s > video.duration_s:
+        raise HTTPException(400, "timestamp is beyond the video duration")
+    session.close()
+    try:
+        result = await ml_client.discover_video_frame(
+            str(video_id), body.timestamp_s, body.concept, body.threshold
+        )
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(502, exc.response.text[:1000]) from exc
+    return ShowcaseDiscoverOut(**result)
+
+
+@router.post(
+    "/videos/{video_id}/removals",
+    response_model=ShowcaseRemovalOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_removal(
+    video_id: UUID,
+    body: ShowcaseRemovalIn,
+    session: SessionDep,
+    user: RequireLabeler,
+) -> ShowcaseRemovalOut:
     video = session.get(ShowcaseVideo, video_id)
     if not video:
         raise HTTPException(404, "showcase video not found")
     if video.status != "ready" or not video.playback_key:
         raise HTTPException(409, f"video is not ready (status={video.status})")
-    # Do not hold a database connection while this request waits behind the ML
-    # semaphore and performs ~1 minute of local vision inference.
-    session.close()
+    if body.end_s <= body.start_s:
+        raise HTTPException(400, "end_s must be after start_s")
+    if body.end_s - body.start_s > 600.01:
+        raise HTTPException(400, "local removal is limited to 10-minute videos")
+    if not body.start_s <= body.seed_s <= body.end_s:
+        raise HTTPException(400, "selected object frame must be inside clip range")
+    if video.duration_s is not None and body.end_s > video.duration_s + 0.01:
+        raise HTTPException(400, "clip end is beyond the video duration")
+    if not video.width or not video.height:
+        raise HTTPException(409, "video dimensions are unavailable")
+    existing = session.get(ShowcaseRemovalJob, body.request_id)
+    if existing:
+        if existing.video_id != video.id:
+            raise HTTPException(409, "request_id already belongs to another video")
+        return _removal_out(existing)
 
-    evidence_id = uuid4()
-    evidence_key = f"showcase/videos/{video.id}/evidence/{evidence_id}.jpg"
-    try:
-        result = await ml_client.video_chat(
-            video_id=str(video.id),
-            question=body.question.strip(),
-            current_time_s=body.current_time_s,
-            evidence_id=str(evidence_id),
-        )
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.text[:1000]
-        raise HTTPException(502, f"local visual inference failed: {detail}") from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, f"local visual inference unavailable: {exc}") from exc
-
-    result["evidence_url"] = (
-        storage.signed_url(evidence_key, expires_seconds=8 * 3600)
-        if storage.exists(evidence_key)
-        else None
+    worker_base, _health = await _personal_worker()
+    job = ShowcaseRemovalJob(
+        id=body.request_id,
+        video_id=video.id,
+        concept=body.concept.strip(),
+        start_s=body.start_s,
+        end_s=body.end_s,
+        seed_s=body.seed_s,
+        selected_score=max(body.selected_scores) if body.selected_scores else None,
+        mask_rle={"objects": body.mask_rles},
+        created_by=user.id,
     )
-    return ShowcaseChatOut(**result)
+    session.add(job)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        existing = session.get(ShowcaseRemovalJob, body.request_id)
+        if existing:
+            return _removal_out(existing)
+        raise
+    session.refresh(job)
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            await _dispatch_removal(client, worker_base, job, video)
+    except httpx.HTTPError as exc:
+        # Keep queued: GET reconciliation can safely retry this idempotent
+        # dispatch after an API restart or ambiguous network failure.
+        job.detail = f"waiting to dispatch to personal worker: {exc}"[:1000]
+        session.add(job)
+        session.commit()
+    return _removal_out(job)
+
+
+@router.get("/removals/{job_id}", response_model=ShowcaseRemovalOut)
+async def get_removal(
+    job_id: UUID, session: SessionDep, _user: RequireAnyAuthed
+) -> ShowcaseRemovalOut:
+    job = session.get(ShowcaseRemovalJob, job_id)
+    if not job:
+        raise HTTPException(404, "removal job not found")
+    if job.status in {"completed", "failed", "cancelled"}:
+        return _removal_out(job)
+    worker_base, _health = await _personal_worker()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{worker_base}/jobs/{job.id}", headers=_PERSONAL_WORKER_HEADERS
+            )
+            if response.status_code == 404:
+                video = session.get(ShowcaseVideo, job.video_id)
+                if not video:
+                    raise HTTPException(404, "source video no longer exists")
+                await _dispatch_removal(client, worker_base, job, video)
+                response = await client.get(
+                    f"{worker_base}/jobs/{job.id}",
+                    headers=_PERSONAL_WORKER_HEADERS,
+                )
+            response.raise_for_status()
+            remote = response.json()
+            job.status = str(remote["status"])
+            job.stage = str(remote["stage"])
+            job.progress = float(remote["progress"])
+            job.detail = remote.get("detail")
+            job.error = remote.get("error")
+            if job.status == "completed" and not job.output_key:
+                lock = _import_locks.setdefault(job.id, asyncio.Lock())
+                async with lock:
+                    session.refresh(job)
+                    if not job.output_key:
+                        output_key = (
+                            f"showcase/videos/{job.video_id}/edits/{job.id}.mp4"
+                        )
+                        output_path = Path(storage.absolute_path(output_key))
+                        temp_path = output_path.with_suffix(f".{uuid4()}.tmp")
+                        try:
+                            async with client.stream(
+                                "GET",
+                                f"{worker_base}/jobs/{job.id}/output",
+                                headers=_PERSONAL_WORKER_HEADERS,
+                            ) as download:
+                                download.raise_for_status()
+                                with temp_path.open("wb") as target:
+                                    async for chunk in download.aiter_bytes():
+                                        target.write(chunk)
+                            os.replace(temp_path, output_path)
+                        finally:
+                            temp_path.unlink(missing_ok=True)
+                        job.output_key = output_key
+                        job.completed_at = utcnow()
+                        session.add(job)
+                        session.commit()
+                        # API storage now owns the durable output; remove the
+                        # native worker copy and intermediates.
+                        with contextlib.suppress(httpx.HTTPError):
+                            await client.delete(
+                                f"{worker_base}/jobs/{job.id}",
+                                headers=_PERSONAL_WORKER_HEADERS,
+                            )
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"personal worker unavailable: {exc}") from exc
+    return _removal_out(job)
+
+
+@router.delete(
+    "/removals/{job_id}",
+    response_model=ShowcaseRemovalOut,
+)
+async def cancel_removal(
+    job_id: UUID, session: SessionDep, _user: RequireLabeler
+) -> ShowcaseRemovalOut:
+    job = session.get(ShowcaseRemovalJob, job_id)
+    if not job:
+        raise HTTPException(404, "removal job not found")
+    if job.status in {"queued", "running"}:
+        with contextlib.suppress(HTTPException, httpx.HTTPError):
+            worker_base, _health = await _personal_worker()
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.delete(
+                    f"{worker_base}/jobs/{job.id}",
+                    headers=_PERSONAL_WORKER_HEADERS,
+                )
+        job.status = "cancelled"
+        job.stage = "cancelled"
+        job.detail = "Cancelled by user"
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+    return _removal_out(job)
+
+
+@router.get(
+    "/videos/{video_id}/removals", response_model=list[ShowcaseRemovalOut]
+)
+async def list_removals(
+    video_id: UUID, session: SessionDep, _user: RequireAnyAuthed
+) -> list[ShowcaseRemovalOut]:
+    if not session.get(ShowcaseVideo, video_id):
+        raise HTTPException(404, "showcase video not found")
+    rows = session.exec(
+        select(ShowcaseRemovalJob)
+        .where(ShowcaseRemovalJob.video_id == video_id)
+        .order_by(ShowcaseRemovalJob.created_at.desc())  # type: ignore[union-attr]
+    ).all()
+    return [_removal_out(row) for row in rows]

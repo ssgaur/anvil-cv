@@ -1,8 +1,8 @@
-"""Smoke-test the deployed `/model` SAM3 + Ollama video showcase.
+"""Smoke-test the deployed `/model` SAM3 object-removal editor.
 
-Set ANVIL_SHOWCASE_CHAT=1 to run the expensive (~1 minute on M1) visual
-question too. The default checks runtime availability, prepared video metadata,
-and byte-range playback.
+Set ANVIL_REMOVAL_E2E=1 to run a real half-second SAM3 → SAM2 tracking →
+ProPainter → MP4 job. The default checks runtime availability, prepared video
+metadata and byte-range playback.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import os
 import sys
 import time
 from urllib.parse import urljoin
+from uuid import uuid4
 
 import requests
 
@@ -33,8 +34,8 @@ def main() -> int:
     runtime.raise_for_status()
     engines = runtime.json()
     assert engines["sam3"] is True, engines
-    assert engines["ollama"] is True, engines
-    print(f"✓ runtime: SAM3 + {engines['ollama_model']}")
+    assert engines.get("personal_worker", {}).get("propainter") is True, engines
+    print("✓ runtime: SAM3 + native-MPS ProPainter worker")
 
     response = session.get(f"{API}/api/showcase/videos", timeout=30)
     response.raise_for_status()
@@ -55,22 +56,45 @@ def main() -> int:
     assert len(chunk.content) == 1024
     print("✓ playback: MP4 byte-range seeking")
 
-    if os.getenv("ANVIL_SHOWCASE_CHAT") == "1":
+    if os.getenv("ANVIL_REMOVAL_E2E") == "1":
         started = time.monotonic()
-        chat = session.post(
-            f"{API}/api/showcase/videos/{ready['id']}/chat",
-            json={"question": "What is happening in this video?", "current_time_s": 20},
+        discovery = session.post(
+            f"{API}/api/showcase/videos/{ready['id']}/discover",
+            json={"timestamp_s": 20, "concept": "person", "threshold": 0.3},
             timeout=900,
         )
-        chat.raise_for_status()
-        result = chat.json()
-        assert result["answer"]
-        assert result["ollama_model"] == engines["ollama_model"]
-        assert result["segmentation_model"] == "sam3"
-        assert result["evidence_url"]
+        discovery.raise_for_status()
+        instances = discovery.json()["instances"]
+        assert instances, "SAM3 found no person at 20s"
+        create = session.post(
+            f"{API}/api/showcase/videos/{ready['id']}/removals",
+            json={
+                "request_id": str(uuid4()),
+                "concept": "person",
+                "start_s": 19.75,
+                "end_s": 20.25,
+                "seed_s": 20,
+                "selected_scores": [item["score"] for item in instances[:2]],
+                "mask_rles": [item["mask_rle"] for item in instances[:2]],
+            },
+            timeout=30,
+        )
+        create.raise_for_status()
+        job = create.json()
+        deadline = time.monotonic() + 600
+        while job["status"] not in ("completed", "failed") and time.monotonic() < deadline:
+            time.sleep(3)
+            poll = session.get(
+                f"{API}/api/showcase/removals/{job['id']}", timeout=30
+            )
+            poll.raise_for_status()
+            job = poll.json()
+        assert job["status"] == "completed", job
+        assert job["output_url"]
+        assert job["original_preserved"] is True
         print(
-            f"✓ chat ({time.monotonic() - started:.1f}s): "
-            f"{result['answer']} [SAM3 {result['detection_count']} detections]"
+            f"✓ removal ({time.monotonic() - started:.1f}s): "
+            "SAM3 mask → SAM2 track → ProPainter → derived MP4"
         )
 
     print("\nALL OK ✓  Open http://localhost:5173/model")

@@ -308,6 +308,31 @@ class ShowcaseVideo(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class ShowcaseRemovalJob(SQLModel, table=True):
+    """A derived edit; the original ShowcaseVideo is never modified."""
+
+    __tablename__ = "showcase_removal_jobs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    video_id: UUID = Field(foreign_key="showcase_videos.id", index=True)
+    concept: str = Field(max_length=255)
+    start_s: float
+    end_s: float
+    seed_s: float
+    selected_score: float | None = None
+    mask_rle: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # queued | tracking | inpainting | encoding | completed | failed
+    status: str = Field(default="queued", index=True, max_length=32)
+    stage: str = Field(default="queued", max_length=64)
+    progress: float = Field(default=0.0)
+    detail: str | None = Field(default=None, max_length=1000)
+    output_key: str | None = Field(default=None, max_length=1000)
+    error: str | None = Field(default=None, max_length=4000)
+    created_by: UUID | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow)
+    completed_at: datetime | None = None
+
+
 class Annotation(SQLModel, table=True):
     __tablename__ = "annotations"
 

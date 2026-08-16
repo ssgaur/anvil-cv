@@ -1,8 +1,8 @@
 import type {
   AdminUser, Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow,
   CompareResult, Dataset, ImageRow, KeypointSchema, ModelVersion, PredictResponse,
-  Project, ReviewStatus, ShowcaseChatResult, ShowcaseRuntime, ShowcaseVideo, User,
-  UserRole,
+  Project, ReviewStatus, ShowcaseDiscovery, ShowcaseRemoval,
+  ShowcaseRuntime, ShowcaseVideo, User, UserRole,
 } from "../types";
 
 export type ImageSort =
@@ -144,7 +144,7 @@ export const api = {
   token,
   health: () => req<{ status: string; version: string }>("/health"),
 
-  // Local SAM3 + Ollama video showcase
+  // Local SAM3 + personal-use video editor
   showcaseRuntime: () => req<ShowcaseRuntime>("/api/showcase/runtime"),
   listShowcaseVideos: () => req<ShowcaseVideo[]>("/api/showcase/videos"),
   getShowcaseVideo: (id: string) =>
@@ -160,12 +160,34 @@ export const api = {
     }),
   deleteShowcaseVideo: (id: string) =>
     req<void>(`/api/showcase/videos/${id}`, { method: "DELETE" }),
-  chatAboutShowcaseVideo: (
-    id: string, body: { question: string; current_time_s?: number | null },
+  discoverShowcaseObjects: (
+    id: string,
+    body: { timestamp_s: number; concept: string; threshold?: number },
   ) =>
-    req<ShowcaseChatResult>(`/api/showcase/videos/${id}/chat`, {
+    req<ShowcaseDiscovery>(`/api/showcase/videos/${id}/discover`, {
       method: "POST", body: JSON.stringify(body),
     }),
+  createShowcaseRemoval: (
+    id: string,
+    body: {
+      request_id: string;
+      concept: string;
+      start_s: number;
+      end_s: number;
+      seed_s: number;
+      selected_scores: number[];
+      mask_rles: { size: [number, number]; counts: string }[];
+    },
+  ) =>
+    req<ShowcaseRemoval>(`/api/showcase/videos/${id}/removals`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  getShowcaseRemoval: (id: string) =>
+    req<ShowcaseRemoval>(`/api/showcase/removals/${id}`),
+  cancelShowcaseRemoval: (id: string) =>
+    req<ShowcaseRemoval>(`/api/showcase/removals/${id}`, { method: "DELETE" }),
+  listShowcaseRemovals: (videoId: string) =>
+    req<ShowcaseRemoval[]>(`/api/showcase/videos/${videoId}/removals`),
 
   // Auth
   login: async (email: string, password: string) => {

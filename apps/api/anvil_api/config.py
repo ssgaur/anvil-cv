@@ -23,13 +23,17 @@ class Settings(BaseSettings):
         default="anvil-local-ml",
         validation_alias=AliasChoices("ANVIL_ML_INTERNAL_TOKEN", "ml_internal_token"),
     )
-    ollama_url: str = Field(
-        default="http://localhost:11434",
-        validation_alias=AliasChoices("OLLAMA_URL", "ollama_url"),
+    personal_video_worker_url: str = Field(
+        default="auto",
+        validation_alias=AliasChoices(
+            "PERSONAL_VIDEO_WORKER_URL", "personal_video_worker_url"
+        ),
     )
-    ollama_vision_model: str = Field(
-        default="gemma3:4b",
-        validation_alias=AliasChoices("OLLAMA_VISION_MODEL", "ollama_vision_model"),
+    personal_video_worker_token: str = Field(
+        default="anvil-personal-worker",
+        validation_alias=AliasChoices(
+            "ANVIL_PERSONAL_WORKER_TOKEN", "personal_video_worker_token"
+        ),
     )
 
     storage_provider: str = "local"

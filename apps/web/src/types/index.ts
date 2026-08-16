@@ -82,23 +82,49 @@ export interface ShowcaseVideo {
 
 export interface ShowcaseRuntime {
   sam3: boolean;
-  ollama: boolean;
-  ollama_model: string;
-  ollama_models: string[];
+  personal_worker?: {
+    status: string;
+    propainter: boolean;
+    device: string;
+    personal_use_only: boolean;
+    max_clip_s: number;
+    processing_size: [number, number];
+  } | null;
 }
 
-export interface ShowcaseChatResult {
-  answer: string;
-  confidence: "high" | "medium" | "low";
-  caveat: string | null;
-  grounding_concept: string | null;
-  evidence_timestamp_s: number | null;
-  evidence_url: string | null;
-  detection_count: number;
-  detection_scores: number[];
-  sampled_timestamps_s: number[];
-  ollama_model: string;
-  segmentation_model: string;
+export interface ShowcaseObjectInstance {
+  polygon: [number, number][];
+  bbox: [number, number, number, number];
+  score: number;
+  mask_rle: { size: [number, number]; counts: string };
+}
+
+export interface ShowcaseDiscovery {
+  timestamp_s: number;
+  concept: string;
+  width: number;
+  height: number;
+  instances: ShowcaseObjectInstance[];
+}
+
+export interface ShowcaseRemoval {
+  id: string;
+  video_id: string;
+  concept: string;
+  start_s: number;
+  end_s: number;
+  seed_s: number;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  stage: string;
+  progress: number;
+  detail: string | null;
+  elapsed_seconds: number;
+  output_url: string | null;
+  error: string | null;
+  original_preserved: boolean;
+  personal_use_only: boolean;
+  created_at: string;
+  completed_at: string | null;
 }
 
 export interface Dataset {

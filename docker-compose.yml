@@ -95,8 +95,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       ML_SERVICE_URL: http://ml:8001
       ANVIL_ML_INTERNAL_TOKEN: ${ANVIL_ML_INTERNAL_TOKEN:-anvil-local-ml}
-      OLLAMA_URL: ${OLLAMA_DOCKER_URL:-auto}
-      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-gemma3:4b}
+      PERSONAL_VIDEO_WORKER_URL: ${PERSONAL_VIDEO_WORKER_URL:-auto}
+      ANVIL_PERSONAL_WORKER_TOKEN: ${ANVIL_PERSONAL_WORKER_TOKEN:-anvil-personal-worker}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-minio}
       # The API and ML containers both need filesystem access for local-mode
       # images/embeddings. Override any host-specific .env STORAGE_ROOT.
@@ -142,8 +142,6 @@ services:
       # letting the kernel OOM-kill the container.
       ANVIL_MODEL_MEMORY_BUDGET_GB: ${ANVIL_MODEL_MEMORY_BUDGET_GB:-6.0}
       ANVIL_ML_INTERNAL_TOKEN: ${ANVIL_ML_INTERNAL_TOKEN:-anvil-local-ml}
-      OLLAMA_URL: ${OLLAMA_DOCKER_URL:-auto}
-      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-gemma3:4b}
     depends_on:
       init-checkpoint:
         condition: service_completed_successfully
