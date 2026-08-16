@@ -177,6 +177,7 @@ export const api = {
       seed_s: number;
       selected_scores: number[];
       mask_rles: { size: [number, number]; counts: string }[];
+      manual_mask_png?: string | null;
     },
   ) =>
     req<ShowcaseRemoval>(`/api/showcase/videos/${id}/removals`, {

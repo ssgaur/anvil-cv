@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { api, fileUrl } from "../lib/api";
 import type {
   ShowcaseDiscovery,
@@ -42,6 +42,9 @@ export function ModelShowcasePage() {
   const [concept, setConcept] = useState("person");
   const [discovery, setDiscovery] = useState<ShowcaseDiscovery | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
+  const [removeShadows, setRemoveShadows] = useState(false);
+  const [shadowMaskPng, setShadowMaskPng] = useState<string | null>(null);
+  const [shadowCanvasKey, setShadowCanvasKey] = useState(0);
   const [clipStart, setClipStart] = useState(0);
   const [clipEnd, setClipEnd] = useState(5);
   const [fullVideo, setFullVideo] = useState(true);
@@ -91,6 +94,9 @@ export function ModelShowcasePage() {
   useEffect(() => {
     setDiscovery(null);
     setSelectedIndices([]);
+    setRemoveShadows(false);
+    setShadowMaskPng(null);
+    setShadowCanvasKey((value) => value + 1);
     setRemoval(null);
     setError(null);
     if (activeId) {
@@ -146,6 +152,9 @@ export function ModelShowcasePage() {
     setDiscovering(true);
     setDiscovery(null);
     setSelectedIndices([]);
+    setRemoveShadows(false);
+    setShadowMaskPng(null);
+    setShadowCanvasKey((value) => value + 1);
     setRemoval(null);
     setError(null);
     try {
@@ -192,6 +201,7 @@ export function ModelShowcasePage() {
           seed_s: discovery.timestamp_s,
           selected_scores: selected.map((item) => item.score),
           mask_rles: selected.map((item) => item.mask_rle),
+          manual_mask_png: removeShadows ? shadowMaskPng : null,
         }),
       );
     } catch (reason) {
@@ -318,6 +328,14 @@ export function ModelShowcasePage() {
                       selectedIndices={selectedIndices}
                       onSelect={selectObject}
                     />
+                    {removeShadows && (
+                      <ShadowBrushOverlay
+                        key={shadowCanvasKey}
+                        width={discovery.width}
+                        height={discovery.height}
+                        onChange={setShadowMaskPng}
+                      />
+                    )}
                   </div>
                 )}
               </>
@@ -434,6 +452,49 @@ export function ModelShowcasePage() {
                   </div>
                 </>
               )}
+              {selected.length > 0 && (
+                <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3">
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={removeShadows}
+                      onChange={(event) => {
+                        setRemoveShadows(event.target.checked);
+                        setShadowMaskPng(null);
+                        setShadowCanvasKey((value) => value + 1);
+                      }}
+                      className="mt-0.5 accent-amber-400"
+                    />
+                    <span>
+                      <span className="block text-xs font-semibold text-amber-200">
+                        Remove subject + cast shadows
+                      </span>
+                      <span className="mt-1 block text-[10px] leading-4 text-neutral-500">
+                        SAM3 does not detect illumination shadows. Enable this,
+                        then paint over each ground shadow in the video.
+                      </span>
+                    </span>
+                  </label>
+                  {removeShadows && (
+                    <div className="mt-2 flex items-center justify-between text-[10px]">
+                      <span className={shadowMaskPng ? "text-emerald-300" : "text-amber-300"}>
+                        {shadowMaskPng
+                          ? "Shadow brush recorded"
+                          : "Paint shadow regions directly on the paused frame"}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setShadowMaskPng(null);
+                          setShadowCanvasKey((value) => value + 1);
+                        }}
+                        className="text-neutral-400 hover:text-neutral-200"
+                      >
+                        Clear paint
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </Step>
 
             <Step number="3" title="Choose the edit range">
@@ -504,6 +565,7 @@ export function ModelShowcasePage() {
                   selected.length === 0 ||
                   submittingRemoval ||
                   !propainterReady ||
+                  (removeShadows && !shadowMaskPng) ||
                   clipEnd <= clipStart ||
                   clipEnd - clipStart > 600 ||
                   !discovery ||
@@ -583,6 +645,85 @@ function ObjectOverlay({
         );
       })}
     </svg>
+  );
+}
+
+function ShadowBrushOverlay({
+  width,
+  height,
+  onChange,
+}: {
+  width: number;
+  height: number;
+  onChange: (png: string) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawingRef = useRef(false);
+  const lastRef = useRef<[number, number] | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = width;
+    canvas.height = height;
+  }, [width, height]);
+
+  function point(event: ReactPointerEvent<HTMLCanvasElement>): [number, number] {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    return [
+      (event.clientX - rect.left) * (canvas.width / rect.width),
+      (event.clientY - rect.top) * (canvas.height / rect.height),
+    ];
+  }
+
+  function draw(next: [number, number]) {
+    const canvas = canvasRef.current;
+    const previous = lastRef.current;
+    if (!canvas || !previous) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = Math.max(24, width * 0.028);
+    context.strokeStyle = "rgba(251, 191, 36, 0.58)";
+    context.beginPath();
+    context.moveTo(previous[0], previous[1]);
+    context.lineTo(next[0], next[1]);
+    context.stroke();
+    lastRef.current = next;
+  }
+
+  function finish(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    lastRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    onChange(event.currentTarget.toDataURL("image/png"));
+  }
+
+  return (
+    <>
+      <canvas
+        ref={canvasRef}
+        className="pointer-events-auto absolute inset-0 h-full w-full cursor-crosshair touch-none"
+        onPointerDown={(event) => {
+          drawingRef.current = true;
+          lastRef.current = point(event);
+          event.currentTarget.setPointerCapture(event.pointerId);
+          // A dot should produce a visible mask even without pointer movement.
+          draw([lastRef.current[0] + 0.01, lastRef.current[1] + 0.01]);
+        }}
+        onPointerMove={(event) => {
+          if (drawingRef.current) draw(point(event));
+        }}
+        onPointerUp={finish}
+        onPointerCancel={finish}
+      />
+      <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-amber-400 px-2.5 py-1.5 text-xs font-semibold text-neutral-950 shadow-lg">
+        Paint every cast shadow
+      </div>
+    </>
   );
 }
 

@@ -90,9 +90,10 @@ async def _dispatch_removal(
             "end_s": job.end_s,
             "seed_s": job.seed_s,
             "mask_rles": objects,
+            "manual_mask_png": job.mask_rle.get("manual_mask_png"),
             "source_width": video.width,
             "source_height": video.height,
-            "fps": 15,
+            "fps": 30,
             "width": 432,
             "height": 240,
         },
@@ -401,7 +402,10 @@ async def create_removal(
         end_s=body.end_s,
         seed_s=body.seed_s,
         selected_score=max(body.selected_scores) if body.selected_scores else None,
-        mask_rle={"objects": body.mask_rles},
+        mask_rle={
+            "objects": body.mask_rles,
+            "manual_mask_png": body.manual_mask_png,
+        },
         created_by=user.id,
     )
     session.add(job)

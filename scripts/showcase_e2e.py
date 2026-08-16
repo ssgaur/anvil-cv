@@ -76,6 +76,7 @@ def main() -> int:
                 "seed_s": 20,
                 "selected_scores": [item["score"] for item in instances[:2]],
                 "mask_rles": [item["mask_rle"] for item in instances[:2]],
+                "manual_mask_png": None,
             },
             timeout=30,
         )

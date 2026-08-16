@@ -12,8 +12,10 @@ from ProPainter is redistributed with Anvil.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import gc
+import io
 import json
 import os
 import shutil
@@ -62,7 +64,8 @@ class RemovalJobIn(BaseModel):
     mask_rles: list[dict[str, Any]] = Field(min_length=1, max_length=20)
     source_width: int = Field(gt=0)
     source_height: int = Field(gt=0)
-    fps: int = Field(default=15, ge=8, le=15)
+    manual_mask_png: str | None = Field(default=None, max_length=4_000_000)
+    fps: int = Field(default=30, ge=8, le=30)
     width: int = Field(default=432, ge=320, le=640)
     height: int = Field(default=240, ge=176, le=368)
 
@@ -254,6 +257,116 @@ def _decode_seed_mask(rle: dict[str, Any], width: int, height: int) -> np.ndarra
     return mask.astype(bool)
 
 
+def _decode_manual_masks(
+    data_url: str | None,
+    source_width: int,
+    source_height: int,
+    width: int,
+    height: int,
+) -> list[np.ndarray]:
+    """Decode a hand-painted shadow mask and split disconnected shadows."""
+    if not data_url:
+        return []
+    prefix = "data:image/png;base64,"
+    if not data_url.startswith(prefix):
+        raise ValueError("manual shadow mask must be a PNG data URL")
+    raw = base64.b64decode(data_url[len(prefix):], validate=True)
+    if len(raw) > 3_000_000:
+        raise ValueError("manual shadow mask is too large")
+    image = Image.open(io.BytesIO(raw)).convert("RGBA")
+    if image.size != (source_width, source_height):
+        raise ValueError(
+            f"manual shadow mask size {image.size} does not match "
+            f"{(source_width, source_height)}"
+        )
+    rgba = np.array(image)
+    binary = ((rgba[:, :, 3] > 0) & (rgba[:, :, :3].max(axis=2) > 0)).astype(
+        np.uint8
+    )
+    working = cv2.resize(binary, (width, height), interpolation=cv2.INTER_NEAREST)
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(
+        working, connectivity=8
+    )
+    components: list[np.ndarray] = []
+    for label in range(1, count):
+        if stats[label, cv2.CC_STAT_AREA] >= 20:
+            components.append(labels == label)
+    return components
+
+
+def _stabilize_tracked_masks(
+    job_id: str,
+    frames: Path,
+    masks: Path,
+    cancel: threading.Event,
+) -> None:
+    """Optical-flow-align neighboring masks and union them to eliminate flicker."""
+    frame_names = sorted(frames.glob("*.jpg"))
+    mask_names = sorted(masks.glob("*.png"))
+    if len(frame_names) != len(mask_names):
+        raise RuntimeError("frame/mask count mismatch during stabilization")
+    stable = masks.parent / "masks-stable"
+    shutil.rmtree(stable, ignore_errors=True)
+    stable.mkdir()
+    optical_flow = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
+
+    def gray(index: int) -> np.ndarray:
+        value = cv2.imread(str(frame_names[index]), cv2.IMREAD_GRAYSCALE)
+        if value is None:
+            raise RuntimeError(f"could not read frame {index} for stabilization")
+        return value
+
+    def mask(index: int) -> np.ndarray:
+        value = cv2.imread(str(mask_names[index]), cv2.IMREAD_GRAYSCALE)
+        if value is None:
+            raise RuntimeError(f"could not read mask {index} for stabilization")
+        return value
+
+    def align(neighbor: np.ndarray, current_gray: np.ndarray, neighbor_gray: np.ndarray):
+        # Backward flow gives, for every current pixel, the corresponding
+        # location to sample in the neighboring mask.
+        flow = optical_flow.calc(current_gray, neighbor_gray, None)
+        height, width = current_gray.shape
+        grid_x, grid_y = np.meshgrid(
+            np.arange(width, dtype=np.float32),
+            np.arange(height, dtype=np.float32),
+        )
+        return cv2.remap(
+            neighbor,
+            grid_x + flow[:, :, 0],
+            grid_y + flow[:, :, 1],
+            cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+
+    total = len(frame_names)
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    for index in range(total):
+        if cancel.is_set():
+            raise RuntimeError("job cancelled")
+        current_gray = gray(index)
+        candidates = [mask(index)]
+        if index > 0:
+            candidates.append(align(mask(index - 1), current_gray, gray(index - 1)))
+        if index + 1 < total:
+            candidates.append(align(mask(index + 1), current_gray, gray(index + 1)))
+        # A union is intentional: under-segmentation leaves visible ghosts,
+        # while optical-flow alignment avoids static motion trails.
+        merged = np.maximum.reduce(candidates)
+        merged = cv2.morphologyEx(merged, cv2.MORPH_CLOSE, close_kernel)
+        cv2.imwrite(str(stable / f"{index:05d}.png"), merged)
+        if index % 20 == 0:
+            _set(
+                job_id,
+                stage="stabilizing",
+                progress=0.42 + 0.06 * index / max(total, 1),
+                detail=f"Stabilizing mask edges {index}/{total}",
+            )
+    shutil.rmtree(masks)
+    stable.replace(masks)
+
+
 def _track_masks(
     job_id: str,
     body: RemovalJobIn,
@@ -280,6 +393,17 @@ def _track_masks(
         ).astype(bool)
         for rle in body.mask_rles
     ]
+    seed_masks.extend(
+        _decode_manual_masks(
+            body.manual_mask_png,
+            body.source_width,
+            body.source_height,
+            body.width,
+            body.height,
+        )
+    )
+    if len(seed_masks) > 40:
+        raise ValueError("too many subject and shadow components (max 40)")
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     predictor = build_sam2_video_predictor(
@@ -342,6 +466,7 @@ def _track_masks(
     gc.collect()
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
+    _stabilize_tracked_masks(job_id, frames, masks, cancel)
 
 
 def _run_propainter_chunks(
@@ -515,9 +640,17 @@ def _render_source_quality(
         mask = cv2.imread(str(masks / f"{index:05d}.png"), cv2.IMREAD_GRAYSCALE)
         if background is None or mask is None:
             raise RuntimeError(f"missing composite inputs for frame {index}")
-        kernel = np.ones((7, 7), np.uint8)
-        alpha = cv2.dilate(mask, kernel, iterations=1)
-        alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=2.5).astype(np.float32) / 255.0
+        # Match ProPainter's four-pixel working-mask dilation so every original
+        # subject pixel is replaced. Keep the entire core at alpha=1; feather
+        # only outside it. Blurring the core itself caused translucent ghosts.
+        cross = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+        core = cv2.dilate(mask, cross, iterations=4)
+        outer_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        outer = cv2.dilate(core, outer_kernel, iterations=1)
+        feather = (
+            cv2.GaussianBlur(outer, (0, 0), sigmaX=2.5).astype(np.float32) / 255.0
+        )
+        alpha = np.where(core > 0, 1.0, feather).astype(np.float32)
         cache[index] = (background, alpha)
         while len(cache) > 4:
             cache.popitem(last=False)
@@ -714,4 +847,9 @@ if __name__ == "__main__":
                         stage="failed",
                         error="worker restarted but durable job input is missing",
                     )
-    uvicorn.run(app, host="127.0.0.1", port=8002, log_level="info")
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=int(os.getenv("ANVIL_PERSONAL_WORKER_PORT", "8002")),
+        log_level="info",
+    )

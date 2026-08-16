@@ -297,6 +297,10 @@ class ShowcaseRemovalIn(BaseModel):
     seed_s: float = Field(ge=0)
     selected_scores: list[float] = []
     mask_rles: list[dict[str, Any]] = Field(min_length=1, max_length=20)
+    # Optional transparent PNG data URL painted over cast shadows. SAM3
+    # segments semantic objects but not illumination, so shadow inclusion must
+    # be explicit rather than guessed.
+    manual_mask_png: str | None = Field(default=None, max_length=4_000_000)
 
 
 class ShowcaseRemovalOut(BaseModel):
