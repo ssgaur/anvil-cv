@@ -275,23 +275,48 @@ class ShowcaseVideoOut(BaseModel):
     created_at: datetime
 
 
-class ShowcaseChatIn(BaseModel):
-    question: str = Field(min_length=2, max_length=1000)
-    current_time_s: float | None = Field(default=None, ge=0)
+class ShowcaseDiscoverIn(BaseModel):
+    timestamp_s: float = Field(ge=0)
+    concept: str = Field(default="person", min_length=1, max_length=255)
+    threshold: float = Field(default=0.3, ge=0.05, le=0.95)
 
 
-class ShowcaseChatOut(BaseModel):
-    answer: str
-    confidence: str
-    caveat: str | None = None
-    grounding_concept: str | None = None
-    evidence_timestamp_s: float | None = None
-    evidence_url: str | None = None
-    detection_count: int = 0
-    detection_scores: list[float] = []
-    sampled_timestamps_s: list[float] = []
-    ollama_model: str
-    segmentation_model: str = "sam3"
+class ShowcaseDiscoverOut(BaseModel):
+    timestamp_s: float
+    concept: str
+    width: int
+    height: int
+    instances: list[dict[str, Any]]
+
+
+class ShowcaseRemovalIn(BaseModel):
+    request_id: UUID
+    concept: str = Field(min_length=1, max_length=255)
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    seed_s: float = Field(ge=0)
+    selected_scores: list[float] = []
+    mask_rles: list[dict[str, Any]] = Field(min_length=1, max_length=20)
+
+
+class ShowcaseRemovalOut(BaseModel):
+    id: UUID
+    video_id: UUID
+    concept: str
+    start_s: float
+    end_s: float
+    seed_s: float
+    status: str
+    stage: str
+    progress: float
+    detail: str | None = None
+    elapsed_seconds: float = 0
+    output_url: str | None = None
+    error: str | None = None
+    original_preserved: bool = True
+    personal_use_only: bool = True
+    created_at: datetime
+    completed_at: datetime | None = None
 
 
 # ---- Model versions (fine-tuned adapters)

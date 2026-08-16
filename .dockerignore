@@ -1,0 +1,11 @@
+.git
+.venv
+.anvil-personal
+data
+logs
+tmp
+checkpoints
+node_modules
+apps/web/node_modules
+apps/web/dist
+*.MOV

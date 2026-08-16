@@ -25,6 +25,7 @@ from anvil_api.models import (
     Comment,
     ModelVersion,
     Project,
+    ShowcaseRemovalJob,
     ShowcaseVideo,
     User,
     UserOAuthIdentity,
@@ -94,6 +95,11 @@ def _user_has_refs(session, user_id: UUID) -> dict[str, int]:
             select(func.count())
             .select_from(ShowcaseVideo)
             .where(ShowcaseVideo.uploaded_by == user_id)
+        ).one(),
+        "showcase_removals": session.exec(
+            select(func.count())
+            .select_from(ShowcaseRemovalJob)
+            .where(ShowcaseRemovalJob.created_by == user_id)
         ).one(),
     }
 

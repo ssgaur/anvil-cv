@@ -16,7 +16,7 @@ export function Layout() {
         </Link>
         <nav className="flex-1 px-2 py-3 space-y-1 text-sm">
           <SideLink to="/projects" label="Projects" icon="📁" />
-          <SideLink to="/model" label="Video AI" icon="◉" />
+          <SideLink to="/model" label="Video Editor" icon="◉" />
           <SideLink to="/quality" label="Quality" icon="📊" disabled />
           {admin && <SideLink to="/admin/users" label="Users" icon="👥" />}
         </nav>

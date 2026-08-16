@@ -93,7 +93,10 @@ def _load_img_as_tensor(img_path, image_size):
     img_pil = Image.open(img_path)
     img_np = np.array(img_pil.convert("RGB").resize((image_size, image_size)))
     if img_np.dtype == np.uint8:  # np.uint8 is expected for JPEG images
-        img_np = img_np / 255.0
+        # NumPy promotes uint8 / float to float64. The synchronous loader hides
+        # this by assigning into a preallocated float32 tensor, but the async
+        # loader returns it directly and MPS cannot accept float64 tensors.
+        img_np = img_np.astype(np.float32) / 255.0
     else:
         raise RuntimeError(f"Unknown image dtype: {img_np.dtype} on {img_path}")
     img = torch.from_numpy(img_np).permute(2, 0, 1)

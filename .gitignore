@@ -39,6 +39,7 @@ tmp/
 *.onnx
 *.npz
 /*.MOV
+.anvil-personal/
 
 # Frontend build & test artifacts
 apps/web/test-results/

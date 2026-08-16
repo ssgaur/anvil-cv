@@ -17,7 +17,6 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
@@ -32,8 +31,8 @@ from anvil_ml.providers import (
 )
 from anvil_ml.providers import release as release_provider
 from anvil_ml.video_showcase import (
+    discover_frame,
     prepare_video,
-    visual_chat,
 )
 from anvil_ml.video_showcase import (
     showcase_ready as video_showcase_ready,
@@ -43,7 +42,7 @@ log = logging.getLogger("anvil.ml")
 
 # Warn before the kernel kills us; an OOM kill itself can never be logged.
 _MEMORY_WARN_PCT = 85.0
-_video_chat_gate = asyncio.Semaphore(1)
+_sam3_inference_gate = asyncio.Semaphore(1)
 
 
 def require_internal(
@@ -162,11 +161,11 @@ class PrepareVideoRequest(BaseModel):
     video_id: str
 
 
-class VideoChatRequest(BaseModel):
+class DiscoverFrameRequest(BaseModel):
     video_id: str
-    question: str
-    current_time_s: float | None = None
-    evidence_id: str
+    timestamp_s: float
+    concept: str
+    threshold: float = 0.3
 
 
 @app.get("/health")
@@ -194,23 +193,21 @@ async def prepare_video_endpoint(req: PrepareVideoRequest) -> dict[str, Any]:
         raise HTTPException(400, f"video preparation failed: {exc}") from exc
 
 
-@app.post("/video/chat", dependencies=[Depends(require_internal)])
-async def video_chat_endpoint(req: VideoChatRequest) -> dict[str, Any]:
+@app.post("/video/discover", dependencies=[Depends(require_internal)])
+async def discover_frame_endpoint(req: DiscoverFrameRequest) -> dict[str, Any]:
     try:
-        # Serialize vision-chat work: SAM3 is a 3.5GB model and concurrent
-        # activations can OOM-kill a laptop-sized ML container.
-        async with _video_chat_gate:
+        async with _sam3_inference_gate:
             return await asyncio.to_thread(
-                visual_chat,
+                discover_frame,
                 req.video_id,
-                req.question,
-                req.current_time_s,
-                req.evidence_id,
+                req.timestamp_s,
+                req.concept,
+                req.threshold,
             )
-    except FileNotFoundError as exc:
-        raise HTTPException(404, f"missing video: {exc}") from exc
-    except (ValueError, RuntimeError, httpx.HTTPError) as exc:
-        raise HTTPException(502, f"visual chat failed: {exc}") from exc
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, f"object discovery failed: {exc}") from exc
 
 
 @app.get("/capabilities")

@@ -115,21 +115,17 @@ class MLClient:
             r.raise_for_status()
             return r.json()
 
-    async def video_chat(
-        self,
-        video_id: str,
-        question: str,
-        current_time_s: float | None,
-        evidence_id: str,
+    async def discover_video_frame(
+        self, video_id: str, timestamp_s: float, concept: str, threshold: float,
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(base_url=self.base, timeout=None) as c:
             r = await c.post(
-                "/video/chat",
+                "/video/discover",
                 json={
                     "video_id": video_id,
-                    "question": question,
-                    "current_time_s": current_time_s,
-                    "evidence_id": evidence_id,
+                    "timestamp_s": timestamp_s,
+                    "concept": concept,
+                    "threshold": threshold,
                 },
                 headers=self._internal_headers,
             )
