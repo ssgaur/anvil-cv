@@ -109,12 +109,12 @@ export function ModelShowcasePage() {
     if (activeId) {
       api.listShowcaseRemovals(activeId)
         .then(async (jobs) => {
+          // API returns newest first. Showing any older interrupted experiment
+          // ahead of a newer completed export hides the download users just
+          // waited hours for.
           const candidate =
-            jobs.find((job) =>
-              ["queued", "running", "pausing", "interrupted"].includes(job.status),
-            ) ??
-              jobs.find((job) => job.status === "completed") ??
-              null;
+            jobs.find((job) => !["failed", "cancelled"].includes(job.status)) ??
+            null;
           if (
             candidate &&
             !["completed", "failed", "cancelled"].includes(candidate.status)
