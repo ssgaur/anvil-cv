@@ -6,7 +6,7 @@
 
 import os
 import warnings
-from threading import Thread
+from collections import OrderedDict
 
 import numpy as np
 import torch
@@ -106,7 +106,13 @@ def _load_img_as_tensor(img_path, image_size):
 
 class AsyncVideoFrameLoader:
     """
-    A list of video frames to be load asynchronously without blocking session start.
+    Memory-bounded on-demand video frame loader.
+
+    Upstream's implementation spawned a thread that eventually cached every
+    normalized 1024x1024 float frame. A two-minute 30fps video therefore grew
+    toward 46GB and macOS killed the worker on a 16GB machine. SAM2 propagation
+    is sequential and already caches the active frame's features, so a tiny
+    frame LRU is both sufficient and dramatically safer.
     """
 
     def __init__(
@@ -123,10 +129,8 @@ class AsyncVideoFrameLoader:
         self.offload_video_to_cpu = offload_video_to_cpu
         self.img_mean = img_mean
         self.img_std = img_std
-        # items in `self.images` will be loaded asynchronously
-        self.images = [None] * len(img_paths)
-        # catch and raise any exceptions in the async loading thread
-        self.exception = None
+        self.images: OrderedDict[int, torch.Tensor] = OrderedDict()
+        self.max_cached_frames = 2
         # video_height and video_width be filled when loading the first image
         self.video_height = None
         self.video_width = None
@@ -136,23 +140,10 @@ class AsyncVideoFrameLoader:
         # to cache it (since it's most likely where the user will click)
         self.__getitem__(0)
 
-        # load the rest of frames asynchronously without blocking the session start
-        def _load_frames():
-            try:
-                for n in tqdm(range(len(self.images)), desc="frame loading (JPEG)"):
-                    self.__getitem__(n)
-            except Exception as e:
-                self.exception = e
-
-        self.thread = Thread(target=_load_frames, daemon=True)
-        self.thread.start()
-
     def __getitem__(self, index):
-        if self.exception is not None:
-            raise RuntimeError("Failure in frame loading thread") from self.exception
-
-        img = self.images[index]
+        img = self.images.get(index)
         if img is not None:
+            self.images.move_to_end(index)
             return img
 
         img, video_height, video_width = _load_img_as_tensor(
@@ -166,10 +157,13 @@ class AsyncVideoFrameLoader:
         if not self.offload_video_to_cpu:
             img = img.to(self.compute_device, non_blocking=True)
         self.images[index] = img
+        self.images.move_to_end(index)
+        while len(self.images) > self.max_cached_frames:
+            self.images.popitem(last=False)
         return img
 
     def __len__(self):
-        return len(self.images)
+        return len(self.img_paths)
 
 
 def load_video_frames(
@@ -246,7 +240,10 @@ def load_video_frames_from_jpg_images(
     frame_names = [
         p
         for p in os.listdir(jpg_folder)
-        if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG"]
+        # Anvil patch: accept lossless PNG frames too. JPEG chroma subsampling
+        # and DCT ringing are avoidable losses for an inpainting pipeline.
+        if os.path.splitext(p)[-1]
+        in [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG"]
     ]
     frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
     num_frames = len(frame_names)

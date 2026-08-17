@@ -101,6 +101,11 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_images_dataset_uploaded "
             "ON images(dataset_id, uploaded_at)"
         ))
+        conn.execute(text(
+            "ALTER TABLE showcase_removal_jobs "
+            "ADD COLUMN IF NOT EXISTS active_seconds DOUBLE PRECISION "
+            "NOT NULL DEFAULT 0"
+        ))
 
 
 def get_session() -> Iterator[Session]:

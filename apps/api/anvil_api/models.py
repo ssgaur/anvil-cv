@@ -325,6 +325,7 @@ class ShowcaseRemovalJob(SQLModel, table=True):
     status: str = Field(default="queued", index=True, max_length=32)
     stage: str = Field(default="queued", max_length=64)
     progress: float = Field(default=0.0)
+    active_seconds: float = Field(default=0.0)
     detail: str | None = Field(default=None, max_length=1000)
     output_key: str | None = Field(default=None, max_length=1000)
     error: str | None = Field(default=None, max_length=4000)

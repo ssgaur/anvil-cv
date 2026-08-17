@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { api, fileUrl } from "../lib/api";
 import type {
   ShowcaseDiscovery,
@@ -19,6 +19,13 @@ function clock(seconds: number | null | undefined) {
 
 function megabytes(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function pluralConcept(concept: string | undefined, count: number) {
+  if (!concept || count === 1) return concept ?? "object";
+  if (concept.toLowerCase() === "child") return "children";
+  if (concept.toLowerCase() === "person") return "people";
+  return concept.endsWith("s") ? concept : `${concept}s`;
 }
 
 function duration(seconds: number) {
@@ -42,6 +49,9 @@ export function ModelShowcasePage() {
   const [concept, setConcept] = useState("person");
   const [discovery, setDiscovery] = useState<ShowcaseDiscovery | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
+  const [removeShadows, setRemoveShadows] = useState(false);
+  const [shadowMaskPng, setShadowMaskPng] = useState<string | null>(null);
+  const [shadowCanvasKey, setShadowCanvasKey] = useState(0);
   const [clipStart, setClipStart] = useState(0);
   const [clipEnd, setClipEnd] = useState(5);
   const [fullVideo, setFullVideo] = useState(true);
@@ -91,23 +101,42 @@ export function ModelShowcasePage() {
   useEffect(() => {
     setDiscovery(null);
     setSelectedIndices([]);
+    setRemoveShadows(false);
+    setShadowMaskPng(null);
+    setShadowCanvasKey((value) => value + 1);
     setRemoval(null);
     setError(null);
     if (activeId) {
       api.listShowcaseRemovals(activeId)
-        .then((jobs) =>
-          setRemoval(
-            jobs.find((job) => ["queued", "running"].includes(job.status)) ??
-              jobs.find((job) => job.status === "completed") ??
-              null,
-          ),
-        )
+        .then(async (jobs) => {
+          // API returns newest first. Showing any older interrupted experiment
+          // ahead of a newer completed export hides the download users just
+          // waited hours for.
+          const candidate =
+            jobs.find((job) => !["failed", "cancelled"].includes(job.status)) ??
+            null;
+          if (
+            candidate &&
+            !["completed", "failed", "cancelled"].includes(candidate.status)
+          ) {
+            try {
+              setRemoval(await api.getShowcaseRemoval(candidate.id));
+              return;
+            } catch {
+              // Keep the persisted row; runtime polling will show worker state.
+            }
+          }
+          setRemoval(candidate);
+        })
         .catch(() => undefined);
     }
   }, [activeId]);
 
   useEffect(() => {
-    if (!removal || ["completed", "failed", "cancelled"].includes(removal.status)) return;
+    if (
+      !removal ||
+      ["completed", "failed", "cancelled", "interrupted"].includes(removal.status)
+    ) return;
     const timer = window.setInterval(async () => {
       try {
         const updated = await api.getShowcaseRemoval(removal.id);
@@ -118,6 +147,16 @@ export function ModelShowcasePage() {
     }, 2500);
     return () => window.clearInterval(timer);
   }, [removal]);
+
+  useEffect(() => {
+    if (removal?.status !== "interrupted") return;
+    const refresh = () => {
+      api.showcaseRuntime().then(setRuntime).catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [removal?.status]);
 
   useEffect(() => {
     if (!fullVideo || active?.duration_s == null) return;
@@ -146,6 +185,9 @@ export function ModelShowcasePage() {
     setDiscovering(true);
     setDiscovery(null);
     setSelectedIndices([]);
+    setRemoveShadows(false);
+    setShadowMaskPng(null);
+    setShadowCanvasKey((value) => value + 1);
     setRemoval(null);
     setError(null);
     try {
@@ -192,6 +234,7 @@ export function ModelShowcasePage() {
           seed_s: discovery.timestamp_s,
           selected_scores: selected.map((item) => item.score),
           mask_rles: selected.map((item) => item.mask_rle),
+          manual_mask_png: removeShadows ? shadowMaskPng : null,
         }),
       );
     } catch (reason) {
@@ -318,6 +361,14 @@ export function ModelShowcasePage() {
                       selectedIndices={selectedIndices}
                       onSelect={selectObject}
                     />
+                    {removeShadows && (
+                      <ShadowBrushOverlay
+                        key={shadowCanvasKey}
+                        width={discovery.width}
+                        height={discovery.height}
+                        onChange={setShadowMaskPng}
+                      />
+                    )}
                   </div>
                 )}
               </>
@@ -434,6 +485,50 @@ export function ModelShowcasePage() {
                   </div>
                 </>
               )}
+              {selected.length > 0 && (
+                <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3">
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={removeShadows}
+                      onChange={(event) => {
+                        setRemoveShadows(event.target.checked);
+                        setShadowMaskPng(null);
+                        setShadowCanvasKey((value) => value + 1);
+                      }}
+                      className="mt-0.5 accent-amber-400"
+                    />
+                    <span>
+                      <span className="block text-xs font-semibold text-amber-200">
+                        Remove subject + cast shadows
+                      </span>
+                      <span className="mt-1 block text-[10px] leading-4 text-neutral-500">
+                        SAM3 does not detect illumination shadows. Enable this,
+                        then click-drag directly over every ground shadow on the
+                        paused video.
+                      </span>
+                    </span>
+                  </label>
+                  {removeShadows && (
+                    <div className="mt-2 flex items-center justify-between text-[10px]">
+                      <span className={shadowMaskPng ? "text-emerald-300" : "text-amber-300"}>
+                        {shadowMaskPng
+                          ? "Shadow paint recorded — removal is ready"
+                          : "Required: paint shadows on the video to continue"}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setShadowMaskPng(null);
+                          setShadowCanvasKey((value) => value + 1);
+                        }}
+                        className="text-neutral-400 hover:text-neutral-200"
+                      >
+                        Clear paint
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </Step>
 
             <Step number="3" title="Choose the edit range">
@@ -464,8 +559,9 @@ export function ModelShowcasePage() {
                     Remove through full video
                   </span>
                   <span className="mt-1 block text-[10px] leading-4 text-neutral-500">
-                    Keeps source duration, dimensions, frame rate and audio. A
-                    2-minute video may take 45–120 minutes on this Mac.
+                    Keeps source duration, dimensions, frame rate and audio.
+                    Six children plus shadows may take roughly 3–5 hours on
+                    this Mac at the precision setting.
                   </span>
                 </span>
               </label>
@@ -493,7 +589,9 @@ export function ModelShowcasePage() {
               <div className="mt-3 rounded-lg bg-sky-400/5 p-2.5 text-[11px] leading-5 text-sky-200/60">
                 Source-quality composite: original pixels stay unchanged outside
                 the tracked mask. Only the removed region is reconstructed, then
-                the full frame is encoded at H.264 CRF 16. Original audio is restored.
+                the full frame is re-encoded at CRF 16 with the source's own
+                colour profile — 10-bit HDR stays 10-bit HDR. Original audio is
+                copied untouched.
               </div>
             </Step>
 
@@ -504,22 +602,31 @@ export function ModelShowcasePage() {
                   selected.length === 0 ||
                   submittingRemoval ||
                   !propainterReady ||
+                  (removeShadows && !shadowMaskPng) ||
                   clipEnd <= clipStart ||
                   clipEnd - clipStart > 600 ||
                   !discovery ||
                   discovery.timestamp_s < clipStart ||
                   discovery.timestamp_s > clipEnd
                 }
-                className="w-full rounded-xl bg-rose-500 py-3 text-sm font-semibold text-white hover:bg-rose-400 disabled:bg-neutral-800 disabled:text-neutral-600"
+                title={
+                  removeShadows && !shadowMaskPng
+                    ? "Paint over the cast shadows on the paused video first"
+                    : undefined
+                }
+                className="sticky bottom-0 z-10 w-full rounded-xl bg-rose-500 py-3 text-sm font-semibold text-white shadow-[0_-12px_30px_#0b0e13] hover:bg-rose-400 disabled:bg-neutral-800 disabled:text-neutral-500"
               >
                 {submittingRemoval
                   ? "Starting removal…"
+                  : removeShadows && !shadowMaskPng
+                    ? "Paint shadows on the video to continue"
+                    : !propainterReady
+                      ? "Start the personal worker to continue"
                   : selected.length > 0
-                    ? `Remove ${selected.length} selected ${
-                        selected.length === 1
-                          ? discovery?.concept
-                          : `${discovery?.concept}s`
-                      }`
+                    ? `Remove ${selected.length} selected ${pluralConcept(
+                        discovery?.concept,
+                        selected.length,
+                      )}`
                     : "Select one or more objects to remove"}
               </button>
             )}
@@ -527,6 +634,14 @@ export function ModelShowcasePage() {
             {removal && (
               <RemovalProgress
                 removal={removal}
+                workerReady={propainterReady}
+                onPause={async () => {
+                  setRemoval(await api.pauseShowcaseRemoval(removal.id));
+                }}
+                onResume={async () => {
+                  setRemoval(await api.resumeShowcaseRemoval(removal.id));
+                  setError(null);
+                }}
                 onCancel={async () => {
                   await api.cancelShowcaseRemoval(removal.id);
                   setRemoval(null);
@@ -586,6 +701,85 @@ function ObjectOverlay({
   );
 }
 
+function ShadowBrushOverlay({
+  width,
+  height,
+  onChange,
+}: {
+  width: number;
+  height: number;
+  onChange: (png: string) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawingRef = useRef(false);
+  const lastRef = useRef<[number, number] | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = width;
+    canvas.height = height;
+  }, [width, height]);
+
+  function point(event: ReactPointerEvent<HTMLCanvasElement>): [number, number] {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    return [
+      (event.clientX - rect.left) * (canvas.width / rect.width),
+      (event.clientY - rect.top) * (canvas.height / rect.height),
+    ];
+  }
+
+  function draw(next: [number, number]) {
+    const canvas = canvasRef.current;
+    const previous = lastRef.current;
+    if (!canvas || !previous) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = Math.max(24, width * 0.028);
+    context.strokeStyle = "rgba(251, 191, 36, 0.58)";
+    context.beginPath();
+    context.moveTo(previous[0], previous[1]);
+    context.lineTo(next[0], next[1]);
+    context.stroke();
+    lastRef.current = next;
+  }
+
+  function finish(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    lastRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    onChange(event.currentTarget.toDataURL("image/png"));
+  }
+
+  return (
+    <>
+      <canvas
+        ref={canvasRef}
+        className="pointer-events-auto absolute inset-0 h-full w-full cursor-crosshair touch-none"
+        onPointerDown={(event) => {
+          drawingRef.current = true;
+          lastRef.current = point(event);
+          event.currentTarget.setPointerCapture(event.pointerId);
+          // A dot should produce a visible mask even without pointer movement.
+          draw([lastRef.current[0] + 0.01, lastRef.current[1] + 0.01]);
+        }}
+        onPointerMove={(event) => {
+          if (drawingRef.current) draw(point(event));
+        }}
+        onPointerUp={finish}
+        onPointerCancel={finish}
+      />
+      <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-amber-400 px-2.5 py-1.5 text-xs font-semibold text-neutral-950 shadow-lg">
+        Paint every cast shadow
+      </div>
+    </>
+  );
+}
+
 function contentRect(width: number, height: number) {
   // The stage is 16:9. Match video object-contain letterboxing exactly.
   const sourceAspect = width / height;
@@ -606,16 +800,23 @@ function contentRect(width: number, height: number) {
 
 function RemovalProgress({
   removal,
+  workerReady,
+  onPause,
+  onResume,
   onCancel,
 }: {
   removal: ShowcaseRemoval;
+  workerReady: boolean;
+  onPause: () => Promise<void>;
+  onResume: () => Promise<void>;
   onCancel: () => Promise<void>;
 }) {
   const percent = Math.round(removal.progress * 100);
   const [elapsed, setElapsed] = useState(removal.elapsed_seconds);
+  const [actionBusy, setActionBusy] = useState(false);
   useEffect(() => {
     setElapsed(removal.elapsed_seconds);
-    if (["completed", "failed", "cancelled"].includes(removal.status)) return;
+    if (!["running", "pausing"].includes(removal.status)) return;
     const baseline = removal.elapsed_seconds;
     const started = Date.now();
     const timer = window.setInterval(() => {
@@ -645,6 +846,46 @@ function RemovalProgress({
             </a>
           )}
         </>
+      ) : removal.status === "interrupted" ? (
+        <>
+          <div className="text-sm font-semibold text-amber-300">
+            Job interrupted — checkpoints are safe
+          </div>
+          <div className="mt-1 text-xs leading-5 text-neutral-500">
+            {removal.detail ??
+              "Start the personal worker, then resume from the latest completed chunk."}
+          </div>
+          <div className="mt-2 text-xs text-neutral-400">
+            Active compute time: {duration(elapsed)} · {percent}% complete
+          </div>
+          <StageChecklist stage={removal.stage} progress={removal.progress} />
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={async () => {
+                setActionBusy(true);
+                try {
+                  await onResume();
+                } finally {
+                  setActionBusy(false);
+                }
+              }}
+              disabled={!workerReady || actionBusy}
+              className="flex-1 rounded-lg bg-rose-500 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-400 disabled:bg-neutral-800 disabled:text-neutral-600"
+            >
+              {actionBusy
+                ? "Resuming…"
+                : workerReady
+                  ? "Resume job"
+                  : "Start worker to resume"}
+            </button>
+            <button
+              onClick={() => void onCancel()}
+              className="rounded-lg border border-white/10 px-3 py-2 text-xs text-neutral-400"
+            >
+              Cancel
+            </button>
+          </div>
+        </>
       ) : removal.status === "failed" || removal.status === "cancelled" ? (
         <>
           <div className="text-sm font-semibold text-rose-300">
@@ -669,14 +910,88 @@ function RemovalProgress({
           <div className="mt-2 text-[10px] leading-4 text-neutral-500">
             {removal.detail ?? "Queued on the local MPS worker"}
           </div>
-          <button
-            onClick={() => void onCancel()}
-            className="mt-3 rounded-lg border border-rose-400/20 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-400/10"
-          >
-            Cancel job
-          </button>
+          <StageChecklist stage={removal.stage} progress={removal.progress} />
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={async () => {
+                setActionBusy(true);
+                try {
+                  await onPause();
+                } finally {
+                  setActionBusy(false);
+                }
+              }}
+              disabled={removal.status === "pausing" || actionBusy}
+              className="flex-1 rounded-lg border border-amber-400/20 px-3 py-1.5 text-xs text-amber-300 hover:bg-amber-400/10 disabled:opacity-50"
+            >
+              {removal.status === "pausing" ? "Pausing safely…" : "Pause job"}
+            </button>
+            <button
+              onClick={() => void onCancel()}
+              className="rounded-lg border border-rose-400/20 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-400/10"
+            >
+              Cancel
+            </button>
+          </div>
         </>
       )}
+    </div>
+  );
+}
+
+const EDIT_STAGES = [
+  ["extracting", "Prepare frames"],
+  ["tracking", "Track objects"],
+  ["stabilizing", "Stabilize masks"],
+  ["inpainting", "Reconstruct background"],
+  ["encoding", "Encode final MP4"],
+] as const;
+
+function StageChecklist({ stage, progress }: { stage: string; progress: number }) {
+  const checkpointIndex =
+    progress < 0.08
+      ? 0
+      : progress < 0.42
+        ? 1
+        : progress < 0.48
+          ? 2
+          : progress < 0.83
+            ? 3
+            : 4;
+  const aliases: Record<string, number> = {
+    downloading: 0,
+    extracting: 0,
+    tracking: 1,
+    pausing: checkpointIndex,
+    paused: checkpointIndex,
+    interrupted: checkpointIndex,
+    stabilizing: 2,
+    inpainting: 3,
+    encoding: 4,
+    completed: 5,
+  };
+  const activeIndex = aliases[stage] ?? 0;
+  return (
+    <div className="mt-3 space-y-1 rounded-lg bg-black/20 p-2.5">
+      {EDIT_STAGES.map(([key, label], index) => {
+        const complete = index < activeIndex || stage === "completed";
+        const active = index === activeIndex && !complete;
+        return (
+          <div
+            key={key}
+            className={`flex items-center gap-2 text-[10px] ${
+              complete
+                ? "text-emerald-400"
+                : active
+                  ? "text-neutral-200"
+                  : "text-neutral-600"
+            }`}
+          >
+            <span>{complete ? "✓" : active ? "●" : "○"}</span>
+            <span>{label}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

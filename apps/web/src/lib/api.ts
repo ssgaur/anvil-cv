@@ -177,6 +177,7 @@ export const api = {
       seed_s: number;
       selected_scores: number[];
       mask_rles: { size: [number, number]; counts: string }[];
+      manual_mask_png?: string | null;
     },
   ) =>
     req<ShowcaseRemoval>(`/api/showcase/videos/${id}/removals`, {
@@ -184,6 +185,10 @@ export const api = {
     }),
   getShowcaseRemoval: (id: string) =>
     req<ShowcaseRemoval>(`/api/showcase/removals/${id}`),
+  pauseShowcaseRemoval: (id: string) =>
+    req<ShowcaseRemoval>(`/api/showcase/removals/${id}/pause`, { method: "POST" }),
+  resumeShowcaseRemoval: (id: string) =>
+    req<ShowcaseRemoval>(`/api/showcase/removals/${id}/resume`, { method: "POST" }),
   cancelShowcaseRemoval: (id: string) =>
     req<ShowcaseRemoval>(`/api/showcase/removals/${id}`, { method: "DELETE" }),
   listShowcaseRemovals: (videoId: string) =>

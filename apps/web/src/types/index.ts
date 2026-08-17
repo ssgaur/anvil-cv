@@ -114,7 +114,14 @@ export interface ShowcaseRemoval {
   start_s: number;
   end_s: number;
   seed_s: number;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status:
+    | "queued"
+    | "running"
+    | "pausing"
+    | "interrupted"
+    | "completed"
+    | "failed"
+    | "cancelled";
   stage: string;
   progress: number;
   detail: string | null;
