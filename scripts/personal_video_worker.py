@@ -844,9 +844,13 @@ def _run_propainter_chunks(
     markers = output / ".chunks"
     markers.mkdir(exist_ok=True)
     chunk_size = int(
-        os.getenv("ANVIL_INPAINT_CHUNK_FRAMES", str(body.fps * 8))
+        os.getenv("ANVIL_INPAINT_CHUNK_FRAMES", str(body.fps * 2))
     )
-    chunk_size = min(max(chunk_size, 10), body.fps * 12)
+    # ProPainter keeps every PIL mask file open while preparing a chunk. macOS
+    # services commonly inherit a 256-FD soft limit, so 8-second chunks plus
+    # overlap can fail around mask 253. Two-second chunks stay comfortably
+    # below that limit and lower MPS memory pressure.
+    chunk_size = min(max(chunk_size, 10), body.fps * 4)
     overlap = max(6, body.fps // 2)
     starts = list(range(0, total, chunk_size))
 
