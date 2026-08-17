@@ -491,7 +491,7 @@ def _stabilize_tracked_masks(
     cancel: threading.Event,
 ) -> None:
     """Optical-flow-align neighboring masks and union them to eliminate flicker."""
-    frame_names = sorted(frames.glob("*.jpg"))
+    frame_names = sorted(frames.glob("*.png"))
     mask_names = sorted(masks.glob("*.png"))
     if len(frame_names) != len(mask_names):
         raise RuntimeError("frame/mask count mismatch during stabilization")
@@ -629,8 +629,8 @@ def _link_frame_chunk(
     chunk_frames.mkdir(parents=True)
     for local_index, global_index in enumerate(range(start, end + 1)):
         os.link(
-            frames / f"{global_index:05d}.jpg",
-            chunk_frames / f"{local_index:05d}.jpg",
+            frames / f"{global_index:05d}.png",
+            chunk_frames / f"{local_index:05d}.png",
         )
     return chunk_frames
 
@@ -661,7 +661,7 @@ def _track_chunk(
             )
         unions: dict[int, np.ndarray] = {}
         boundary: list[np.ndarray] | None = None
-        boundary_index = 0 if reverse else len(list(chunk_frames.glob("*.jpg"))) - 1
+        boundary_index = 0 if reverse else len(list(chunk_frames.glob("*.png"))) - 1
         for local_index, _obj_ids, logits in predictor.propagate_in_video(
             state,
             start_frame_idx=seed_local_idx,
@@ -696,7 +696,7 @@ def _track_masks(
 ) -> None:
     from sam2.build_sam import build_sam2_video_predictor
 
-    names = sorted(frames.glob("*.jpg"))
+    names = sorted(frames.glob("*.png"))
     if not names:
         raise RuntimeError("clip extraction produced no frames")
     seed_idx = min(
@@ -836,7 +836,7 @@ def _run_propainter_chunks(
     cancel: threading.Event,
 ) -> None:
     """Inpaint bounded overlapping chunks so long videos fit unified memory."""
-    frame_names = sorted(frames.glob("*.jpg"))
+    frame_names = sorted(frames.glob("*.png"))
     total = len(frame_names)
     if total == 0:
         raise RuntimeError("no tracked frames to inpaint")
@@ -896,8 +896,8 @@ def _run_propainter_chunks(
         try:
             for local, global_index in enumerate(range(extended_start, extended_end)):
                 os.link(
-                    frames / f"{global_index:05d}.jpg",
-                    chunk_frames / f"{local:05d}.jpg",
+                    frames / f"{global_index:05d}.png",
+                    chunk_frames / f"{local:05d}.png",
                 )
                 os.link(
                     masks / f"{global_index:05d}.png",
@@ -957,6 +957,102 @@ def _run_propainter_chunks(
         )
 
 
+def _probe_source(source: Path) -> dict[str, Any]:
+    """Read geometry plus the colour tags that decide how players grade the file.
+
+    iPhone footage is 10-bit HLG/BT.2020. Raw frames piped into ffmpeg carry no
+    colour metadata, so an export built from a rawvideo pipe is tagged
+    "unknown" and every player falls back to BT.709. HLG puts diffuse white at
+    75% signal, so the same pixels then render visibly dim and desaturated even
+    though the samples are byte-for-byte correct. Copying these tags onto the
+    output is what keeps the edit looking like the original.
+    """
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,pix_fmt,r_frame_rate,color_primaries,"
+            "color_transfer,color_space,color_range",
+            "-of",
+            "json",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    streams = json.loads(probe.stdout).get("streams") or []
+    if not streams:
+        raise RuntimeError("source has no video stream")
+    stream = streams[0]
+
+    def tag(name: str, fallback: str) -> str:
+        value = stream.get(name)
+        return value if value and value != "unknown" else fallback
+
+    numerator, _, denominator = (stream.get("r_frame_rate") or "0/1").partition("/")
+    try:
+        fps = float(numerator) / float(denominator or 1)
+    except (TypeError, ValueError, ZeroDivisionError):
+        fps = 0.0
+    width = int(stream.get("width") or 0)
+    height = int(stream.get("height") or 0)
+    if fps <= 0 or width <= 0 or height <= 0:
+        raise RuntimeError("source video metadata is invalid")
+
+    pix_fmt = stream.get("pix_fmt") or "yuv420p"
+    depth = 10 if ("10" in pix_fmt or "12" in pix_fmt) else 8
+    audio = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "default=nw=1:nk=1",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return {
+        "width": width,
+        "height": height,
+        "fps": fps,
+        "depth": depth,
+        "primaries": tag("color_primaries", "bt709"),
+        "transfer": tag("color_transfer", "bt709"),
+        "matrix": tag("color_space", "bt709"),
+        "range": tag("color_range", "tv"),
+        "audio_codec": audio.stdout.strip(),
+    }
+
+
+def _read_exact(stream: Any, size: int) -> bytes | None:
+    """Read one whole frame, tolerating short reads from the decoder pipe.
+
+    A partial frame only happens if the decoder died mid-write, which the
+    non-zero exit check below reports. Dropping it is safer than padding
+    garbage into the encoder.
+    """
+    parts: list[bytes] = []
+    remaining = size
+    while remaining > 0:
+        block = stream.read(remaining)
+        if not block:
+            return None
+        parts.append(block)
+        remaining -= len(block)
+    return b"".join(parts)
+
+
 def _render_source_quality(
     job_id: str,
     source: Path,
@@ -967,21 +1063,48 @@ def _render_source_quality(
     cancel: threading.Event,
 ) -> None:
     """Composite only the synthesized hole onto original-resolution frames."""
-    capture = cv2.VideoCapture(str(source))
-    source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if source_fps <= 0 or width <= 0 or height <= 0:
-        capture.release()
-        raise RuntimeError("source video metadata is invalid")
-    capture.set(cv2.CAP_PROP_POS_MSEC, body.start_s * 1000.0)
+    info = _probe_source(source)
+    width = info["width"]
+    height = info["height"]
+    source_fps = info["fps"]
+    depth = info["depth"]
+    # Escape hatch: force 8-bit H.264 if a player cannot handle HEVC Main 10.
+    # The colour tags below still apply, so the export stays correctly graded.
+    depth_override = os.getenv("ANVIL_OUTPUT_DEPTH", "auto").strip().lower()
+    if depth_override == "8":
+        depth = 8
+    elif depth_override == "10":
+        depth = 10
+    # 10-bit sources stay 10-bit end to end. Flattening HLG to 8 bits banded the
+    # sky badly, and the extra depth costs only pipe bandwidth.
+    pipe_format = "rgb48le" if depth == 10 else "rgb24"
+    sample_dtype = np.uint16 if depth == 10 else np.uint8
+    peak = 65535.0 if depth == 10 else 255.0
+    frame_bytes = width * height * 3 * (2 if depth == 10 else 1)
     duration = body.end_s - body.start_s
     total_output = max(1, round(duration * source_fps))
     total_work = len(list(inpainted.glob("*.png")))
     if total_work == 0:
-        capture.release()
         raise RuntimeError("ProPainter produced no frames")
 
+    # OpenCV cannot express 10-bit output and drops colour metadata, so decode
+    # through ffmpeg instead and keep the pipeline colour-managed.
+    decode_command = [
+        "ffmpeg",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{body.start_s:.3f}",
+        "-t",
+        f"{duration:.3f}",
+        "-i",
+        str(source),
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        pipe_format,
+        "pipe:1",
+    ]
     command = [
         "ffmpeg",
         "-loglevel",
@@ -990,7 +1113,7 @@ def _render_source_quality(
         "-f",
         "rawvideo",
         "-pix_fmt",
-        "bgr24",
+        pipe_format,
         "-s",
         f"{width}x{height}",
         "-r",
@@ -1007,22 +1130,72 @@ def _render_source_quality(
         "0:v:0",
         "-map",
         "1:a:0?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "slow",
-        "-crf",
-        "16",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-movflags",
-        "+faststart",
-        str(output),
     ]
+    # ffmpeg auto-inserts an RGB->YUV scaler for the rawvideo pipe, and that
+    # filter resets primaries/transfer to "unspecified" on the frames it emits,
+    # which silently overrides the -color_* container options. Writing the VUI
+    # through the encoder's own parameters is the only way the HLG transfer
+    # survives, and it is exactly the tag that keeps the file from looking dim.
+    vui = (
+        f"colorprim={info['primaries']}"
+        f":transfer={info['transfer']}"
+        f":colormatrix={info['matrix']}"
+        f":range={'full' if info['range'] == 'pc' else 'limited'}"
+    )
+    if depth == 10:
+        command += [
+            "-c:v",
+            "libx265",
+            "-preset",
+            os.getenv("ANVIL_ENCODE_PRESET", "medium"),
+            "-crf",
+            os.getenv("ANVIL_ENCODE_CRF", "16"),
+            "-pix_fmt",
+            "yuv420p10le",
+            "-x265-params",
+            vui,
+            # Apple players require the hvc1 brand; hev1 shows a black frame.
+            "-tag:v",
+            "hvc1",
+        ]
+    else:
+        command += [
+            "-c:v",
+            "libx264",
+            "-preset",
+            os.getenv("ANVIL_ENCODE_PRESET", "slow"),
+            "-crf",
+            os.getenv("ANVIL_ENCODE_CRF", "16"),
+            "-pix_fmt",
+            "yuv420p",
+            "-x264-params",
+            vui,
+        ]
+    command += [
+        "-color_primaries",
+        info["primaries"],
+        "-color_trc",
+        info["transfer"],
+        "-colorspace",
+        info["matrix"],
+        "-color_range",
+        info["range"],
+    ]
+    # Keep the original audio untouched whenever the codec already fits MP4.
+    if info["audio_codec"] in {"aac", "mp3"}:
+        command += ["-c:a", "copy"]
+    else:
+        command += ["-c:a", "aac", "-b:a", "256k"]
+    command += ["-movflags", "+faststart", str(output)]
+
+    decoder_log = output.with_suffix(".decode.log")
+    decoder_errors = decoder_log.open("wb")
+    decoder = subprocess.Popen(
+        decode_command,
+        stdout=subprocess.PIPE,
+        stderr=decoder_errors,
+        bufsize=frame_bytes,
+    )
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
     )
@@ -1038,6 +1211,9 @@ def _render_source_quality(
         mask = cv2.imread(str(masks / f"{index:05d}.png"), cv2.IMREAD_GRAYSCALE)
         if background is None or mask is None:
             raise RuntimeError(f"missing composite inputs for frame {index}")
+        # The decoder pipe delivers RGB, so flip ProPainter's BGR read once here
+        # instead of per composited frame.
+        background = np.ascontiguousarray(background[:, :, ::-1])
         # Match ProPainter's four-pixel working-mask dilation so every original
         # subject pixel is replaced. Keep the entire core at alpha=1; feather
         # only outside it. Blurring the core itself caused translucent ghosts.
@@ -1056,16 +1232,19 @@ def _render_source_quality(
 
     try:
         assert process.stdin is not None
+        assert decoder.stdout is not None
         written = 0
-        for output_index in range(total_output):
+        while True:
             _heartbeat(job_id)
             if cancel.is_set():
                 raise RuntimeError("job cancelled")
-            ok, original = capture.read()
-            if not ok or original is None:
-                raise RuntimeError(
-                    f"source decode ended at frame {output_index}/{total_output}"
-                )
+            payload = _read_exact(decoder.stdout, frame_bytes)
+            if payload is None:
+                break
+            output_index = written
+            original = np.frombuffer(payload, dtype=sample_dtype).reshape(
+                height, width, 3
+            )
             position = output_index / source_fps * body.fps
             low = min(int(position), total_work - 1)
             high = min(low + 1, total_work - 1)
@@ -1079,22 +1258,31 @@ def _render_source_quality(
             )
             alpha = cv2.resize(alpha, (width, height), interpolation=cv2.INTER_LINEAR)
             alpha3 = alpha[:, :, None]
-            composite = (
-                original.astype(np.float32) * (1.0 - alpha3)
-                + background.astype(np.float32) * alpha3
-            ).clip(0, 255).astype(np.uint8)
-            process.stdin.write(composite.tobytes())
+            # Composite in float32 and lift the 8-bit reconstruction to the
+            # source's range so the patch matches its surroundings exactly.
+            reconstructed = background.astype(np.float32)
+            reconstructed *= peak / 255.0
+            reconstructed *= alpha3
+            composite = original.astype(np.float32)
+            composite *= 1.0 - alpha3
+            composite += reconstructed
+            np.clip(composite, 0.0, peak, out=composite)
+            process.stdin.write(composite.astype(sample_dtype).tobytes())
             written += 1
             if output_index % max(1, round(source_fps * 2)) == 0:
                 _set(
                     job_id,
                     stage="encoding",
-                    progress=0.83 + 0.16 * output_index / total_output,
+                    progress=0.83 + 0.16 * min(1.0, output_index / total_output),
                     detail=(
                         "Compositing reconstructed pixels onto source-quality video "
                         f"{output_index}/{total_output}"
                     ),
                 )
+        if decoder.wait() != 0:
+            decoder_errors.flush()
+            reason = decoder_log.read_text(errors="replace")[-2000:]
+            raise RuntimeError(f"source decode failed during final composite: {reason}")
         process.stdin.close()
         stderr = process.stderr.read() if process.stderr is not None else b""
         return_code = process.wait()
@@ -1103,14 +1291,22 @@ def _render_source_quality(
                 f"high-quality encoding failed ({return_code}): "
                 f"{stderr.decode(errors='replace')[-2000:]}"
             )
-        if written != total_output:
+        # ffmpeg's trimmed decode can legitimately land a frame or two either
+        # side of the nominal duration, matching the extraction tolerance.
+        if abs(written - total_output) > 2 or written == 0:
             raise RuntimeError(f"encoded {written}/{total_output} expected frames")
     except Exception:
         if process.poll() is None:
             process.terminate()
         raise
     finally:
-        capture.release()
+        if decoder.poll() is None:
+            decoder.terminate()
+        with contextlib.suppress(Exception):
+            if decoder.stdout is not None:
+                decoder.stdout.close()
+        decoder_errors.close()
+        decoder_log.unlink(missing_ok=True)
 
 
 def _run_job(job_id: str, body: RemovalJobIn) -> None:
@@ -1140,7 +1336,7 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
 
             duration = body.end_s - body.start_s
             expected_frames = max(1, round(duration * body.fps))
-            existing_names = sorted(frames.glob("*.jpg")) if frames.is_dir() else []
+            existing_names = sorted(frames.glob("*.png")) if frames.is_dir() else []
             existing_frames = len(existing_names)
             contiguous = all(
                 path.stem == f"{index:05d}"
@@ -1164,6 +1360,7 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
                     "width": body.width,
                     "height": body.height,
                     "frame_count": existing_frames,
+                    "format": "png",
                 }
             )
             if not extraction_valid:
@@ -1190,17 +1387,21 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
                         "-i",
                         str(source),
                         "-vf",
-                        f"fps={body.fps},scale={body.width}:{body.height}",
+                        f"fps={body.fps},scale={body.width}:{body.height}:flags=lanczos",
                         "-start_number",
                         "0",
-                        "-q:v",
-                        "2",
-                        str(temp_frames / "%05d.jpg"),
+                        # Lossless frames. JPEG cost roughly 2x the pixel error
+                        # and, because ffmpeg writes BT.2020 chroma that OpenCV
+                        # then decodes as BT.601, gave the reconstructed patch a
+                        # faint green cast against untouched surroundings.
+                        "-compression_level",
+                        "1",
+                        str(temp_frames / "%05d.png"),
                     ],
                     cancel=cancel,
                     job_id=job_id,
                 )
-                extracted = len(list(temp_frames.glob("*.jpg")))
+                extracted = len(list(temp_frames.glob("*.png")))
                 if extracted <= 0 or abs(extracted - expected_frames) > 2:
                     raise RuntimeError(
                         f"ffmpeg extracted {extracted} frames; expected about "
@@ -1215,6 +1416,7 @@ def _run_job(job_id: str, body: RemovalJobIn) -> None:
                         "width": body.width,
                         "height": body.height,
                         "frame_count": extracted,
+                        "format": "png",
                     },
                 )
                 temp_frames.replace(frames)

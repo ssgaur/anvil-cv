@@ -589,7 +589,9 @@ export function ModelShowcasePage() {
               <div className="mt-3 rounded-lg bg-sky-400/5 p-2.5 text-[11px] leading-5 text-sky-200/60">
                 Source-quality composite: original pixels stay unchanged outside
                 the tracked mask. Only the removed region is reconstructed, then
-                the full frame is encoded at H.264 CRF 16. Original audio is restored.
+                the full frame is re-encoded at CRF 16 with the source's own
+                colour profile — 10-bit HDR stays 10-bit HDR. Original audio is
+                copied untouched.
               </div>
             </Step>
 

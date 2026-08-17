@@ -6,7 +6,8 @@ Anvil can remove one selected object from a short video range using:
 2. **SAM2 video propagation** — tracks the selected pixel mask through the clip.
 3. **ProPainter** — reconstructs the hidden background across time.
 4. **Source-quality compositor + FFmpeg** — changes only the tracked region,
-   restores original audio, and writes a separate high-bitrate H.264/AAC MP4.
+   stream-copies original audio, and writes a separate high-bitrate MP4 that
+   reproduces the source's colour tags (HEVC Main 10 for 10-bit HDR sources).
 
 The original uploaded video and local source file are never modified. Every edit
 is a derived MP4 under a separate storage key.
@@ -94,9 +95,48 @@ the phrase `object`; use concrete phrases such as `person`, `flag`, `chair` or
 The final renderer does **not** upscale a low-resolution version of the entire
 video. ProPainter works on bounded 432×240 overlapping chunks, but its generated
 pixels are composited only inside a feathered version of the tracked mask. Every
-pixel outside that region comes from the original-resolution playback frame.
-The result is encoded at source dimensions and frame rate with H.264 CRF 16;
-original audio is restored.
+pixel outside that region comes from the original-resolution source frame.
+
+### Colour management (HDR)
+
+iPhone footage is 10-bit HLG in the BT.2020 colour space. The renderer probes
+the source with `ffprobe` and reproduces its exact colour tags on the export.
+This matters more than any other quality setting:
+
+- Frames are decoded through FFmpeg into 16-bit RGB, not OpenCV, because OpenCV
+  cannot represent 10-bit output and discards colour metadata.
+- Compositing happens in float32 at the source bit depth.
+- 10-bit sources are encoded as HEVC Main 10 (`libx265`, CRF 16, `hvc1` tag);
+  8-bit sources stay H.264.
+- Primaries, transfer, matrix and range are written into the **bitstream** via
+  `-x265-params`/`-x264-params`. FFmpeg auto-inserts an RGB→YUV scaler for a
+  rawvideo pipe, and that filter resets the container-level `-color_*` options
+  to "unspecified".
+- Original audio is stream-copied when it is already AAC, so it stays bit-exact.
+
+Without the tags the samples are still correct, but every player falls back to
+BT.709. HLG puts diffuse white at 75% signal, so the whole video renders
+noticeably dim and flat — this was the cause of the washed-out first export.
+
+Overrides: `ANVIL_ENCODE_CRF`, `ANVIL_ENCODE_PRESET`, and
+`ANVIL_OUTPUT_DEPTH=8` to force H.264 if a player cannot decode HEVC Main 10.
+The colour tags are applied on either path.
+
+### Lossless working frames
+
+Working frames are extracted as PNG with a Lanczos downscale. JPEG was measured
+at roughly twice the pixel error, and because FFmpeg writes BT.2020 chroma into
+a JPEG that OpenCV then decodes as BT.601, it gave the reconstructed patch a
+faint green cast against its untouched surroundings.
+
+`vendor/sam2` is patched to accept PNG frame folders; upstream SAM2 allows JPEG
+only.
+
+### Why ProPainter stays at 432×240
+
+Measured on a 16GB M1 Pro: 640×360 drove swap to 20.5GB of 21.5GB and ran ~10x
+slower than 432×240 for the same 92 frames. That is the same memory-pressure
+failure mode that previously froze the machine. Do not raise it on 16GB.
 
 ### Ghost/flicker prevention
 

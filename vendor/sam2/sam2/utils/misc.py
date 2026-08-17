@@ -240,7 +240,10 @@ def load_video_frames_from_jpg_images(
     frame_names = [
         p
         for p in os.listdir(jpg_folder)
-        if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG"]
+        # Anvil patch: accept lossless PNG frames too. JPEG chroma subsampling
+        # and DCT ringing are avoidable losses for an inpainting pipeline.
+        if os.path.splitext(p)[-1]
+        in [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG"]
     ]
     frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
     num_frames = len(frame_names)
