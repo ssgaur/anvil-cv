@@ -77,8 +77,11 @@ class RemovalJobIn(BaseModel):
     source_height: int = Field(gt=0)
     manual_mask_png: str | None = Field(default=None, max_length=4_000_000)
     fps: int = Field(default=30, ge=8, le=30)
-    width: int = Field(default=432, ge=320, le=640)
-    height: int = Field(default=240, ge=176, le=368)
+    # 432x240 is the measured ceiling for a 16GB Mac, not a model limit. The
+    # caps are wide enough for a bigger GPU; see _processing_size() and
+    # docs/PERSONAL_VIDEO_REMOVAL.md for the benchmark behind the default.
+    width: int = Field(default=432, ge=320, le=1920)
+    height: int = Field(default=240, ge=176, le=1080)
 
 
 def require_token(x_anvil_personal: str | None = Header(default=None)) -> None:
@@ -211,11 +214,46 @@ def health() -> dict[str, Any]:
     }
 
 
+def _processing_size(body: RemovalJobIn) -> RemovalJobIn:
+    """Apply the operator's ProPainter working resolution, if they set one.
+
+    ProPainter's output is composited into the mask at full source resolution,
+    so this value alone decides how sharp the reconstructed region looks: at
+    the 432x240 default a generated pixel is stretched over ~20 output pixels.
+
+    Raising it is a hardware question, not a quality preference. Benchmarks on
+    a 16GB M1 Pro (documented in docs/PERSONAL_VIDEO_REMOVAL.md) show 432x240
+    is the practical ceiling there; 512x288 and 640x360 either thrash or run
+    several times slower. On a larger GPU set ANVIL_PROCESS_SIZE=1024x576 (or
+    1920x1080 to remove the upscale entirely).
+    """
+    raw = os.getenv("ANVIL_PROCESS_SIZE", "").strip().lower()
+    if not raw:
+        return body
+    try:
+        width_text, _, height_text = raw.partition("x")
+        width, height = int(width_text), int(height_text)
+    except ValueError as exc:
+        raise HTTPException(400, f"invalid ANVIL_PROCESS_SIZE={raw!r}") from exc
+    # ProPainter silently truncates each side down to a multiple of 8
+    # (resize_frames in inference_propainter.py). Rejecting unaligned sizes
+    # keeps the processed aspect ratio identical to the source, instead of
+    # stretching the reconstruction by a few pixels during compositing.
+    if width % 8 or height % 8:
+        raise HTTPException(
+            400,
+            f"ANVIL_PROCESS_SIZE={raw} must be a multiple of 8 on both sides "
+            "(e.g. 1024x576, 1920x1080)",
+        )
+    return body.model_copy(update={"width": width, "height": height})
+
+
 @app.post("/jobs", dependencies=[Depends(require_token)])
 def create_job(body: RemovalJobIn) -> dict[str, Any]:
     installed, error = _check_install()
     if not installed:
         raise HTTPException(503, error)
+    body = _processing_size(body)
     job_id = str(UUID(body.job_id))
     if body.end_s <= body.start_s:
         raise HTTPException(400, "end_s must be after start_s")
@@ -851,7 +889,18 @@ def _run_propainter_chunks(
     # overlap can fail around mask 253. Two-second chunks stay comfortably
     # below that limit and lower MPS memory pressure.
     chunk_size = min(max(chunk_size, 10), body.fps * 4)
+    # Peak memory tracks resolution x frames-per-chunk, so a raised resolution
+    # must buy fewer frames per chunk or it reproduces the measured 640x360
+    # failures. This only bounds memory; it cannot make a bigger resolution
+    # fast on a machine that lacks the RAM for it.
+    reference_pixels = 432 * 240
+    working_pixels = max(1, body.width * body.height)
+    if working_pixels > reference_pixels:
+        scaled = int(chunk_size * reference_pixels / working_pixels)
+        chunk_size = max(10, min(chunk_size, scaled))
     overlap = max(6, body.fps // 2)
+    # Overlap must not dwarf the kept region, or most compute is thrown away.
+    overlap = min(overlap, max(3, chunk_size // 2))
     starts = list(range(0, total, chunk_size))
 
     for chunk_number, central_start in enumerate(starts):

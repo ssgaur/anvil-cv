@@ -122,6 +122,50 @@ Overrides: `ANVIL_ENCODE_CRF`, `ANVIL_ENCODE_PRESET`, and
 `ANVIL_OUTPUT_DEPTH=8` to force H.264 if a player cannot decode HEVC Main 10.
 The colour tags are applied on either path.
 
+### ProPainter working resolution
+
+This single setting decides how sharp the reconstructed region looks. At the
+432x240 default, a generated pixel is stretched over **~20 output pixels** on
+the way to 1920x1080, which is what makes revealed background look soft. It is
+the dominant quality limit in the pipeline — ahead of the inpainting model
+itself.
+
+Raising it is a hardware question. Measured on a 16GB M1 Pro, one ProPainter
+chunk over real footage with 11 tracked identities:
+
+| Resolution | Chunk | Result | Projected inpainting for a 2-min clip |
+|---|---|---|---|
+| **432x240** | 60 | completes, no swap growth | **1.15 h** |
+| 512x288 | 30 | timed out, thrashing | — |
+| 640x360 | 30 | failed, free memory hit 0% | — |
+| 640x360 | 20 | timed out, thrashing | — |
+| 640x360 | 12 | completes, 5.9x slower per frame | 8.28 h |
+
+So on 16GB, 432x240 is the practical ceiling: the only larger configuration
+that finishes turns a 5.5-hour job into roughly 12.5 hours, and still leaves a
+3x upscale rather than removing it. Note that memory scales with
+resolution x frames-per-chunk, so shrinking chunks does buy headroom — just
+not enough to make this trade worthwhile here.
+
+On a larger GPU (for example an A100 80GB), set:
+
+```bash
+export ANVIL_PROCESS_SIZE=1024x576    # or 1920x1080 to remove the upscale
+```
+
+Both sides must be multiples of 8: ProPainter truncates each side down to a
+multiple of 8 internally, so an unaligned value such as `960x540` would be
+processed at 960x536 and then stretched back during compositing. `1024x576`
+and `1920x1080` are exact 16:9 and already aligned.
+
+The inpainting chunk size scales down
+automatically with resolution, which bounds memory and keeps open mask files
+below the macOS 256-FD limit; it cannot make a large resolution fast on a
+machine that lacks the RAM.
+
+SAM2 tracking cost is unaffected: it resizes every frame to 1024x1024
+internally, so raising this value improves mask precision at no tracking cost.
+
 ### Lossless working frames
 
 Working frames are extracted as PNG with a Lanczos downscale. JPEG was measured
@@ -131,12 +175,6 @@ faint green cast against its untouched surroundings.
 
 `vendor/sam2` is patched to accept PNG frame folders; upstream SAM2 allows JPEG
 only.
-
-### Why ProPainter stays at 432×240
-
-Measured on a 16GB M1 Pro: 640×360 drove swap to 20.5GB of 21.5GB and ran ~10x
-slower than 432×240 for the same 92 frames. That is the same memory-pressure
-failure mode that previously froze the machine. Do not raise it on 16GB.
 
 ### Ghost/flicker prevention
 
