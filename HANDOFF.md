@@ -9,8 +9,9 @@
 > newest Track B direction.
 
 ## What is Anvil
-OSS image-annotation platform — V7 Darwin alternative — with built-in
-SAM2 LoRA / full fine-tuning. Apache-2.0. Repo:
+Source-available image-annotation platform — V7 Darwin alternative — with
+built-in SAM2 LoRA / full fine-tuning. PolyForm Noncommercial 1.0.0 for
+noncommercial use; separate paid license for commercial use. Repo:
 https://github.com/ssgaur/anvil-cv
 
 The wedge vs V7: V7 ships frozen SAM2. Anvil lets you fine-tune SAM2
@@ -79,8 +80,8 @@ Verification for this batch:
 - `ANVIL_ADMIN_EMAIL=admin@anvil.dev python3 scripts/prod_features_e2e.py` → ALL OK
   (covers hierarchy, cycle, kp-schema lock, polyline / OBB / keypoints validation + create, filters, sort, all 4 bulk endpoints, COCO export)
 
-### Track B — OSS Launch Readiness (DONE)
-Must-have + strongly-recommended OSS launch work is complete:
+### Track B — Public Launch Readiness (DONE)
+Must-have + strongly-recommended public launch work is complete:
 - README above-fold pitch + comparison table + no-telemetry stance + local demo GIF (`docs/assets/anvil-demo.gif`).
 - Standard community files: `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`.
 - Sample data loader: `scripts/load_sample_dataset.py` generates synthetic PNGs, creates project/dataset/classes, uploads images, and seeds annotations with no third-party Python deps.

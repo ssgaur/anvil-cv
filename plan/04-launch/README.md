@@ -30,7 +30,7 @@
 
 ### Repo polish for stars
 - [ ] Beautiful README with screenshots + GIF
-- [ ] Apache 2.0 LICENSE
+- [ ] PolyForm Noncommercial 1.0.0 plus separate commercial licensing terms
 - [ ] CODE_OF_CONDUCT, CONTRIBUTING, SECURITY
 - [ ] Issue templates (bug / feature / question)
 - [ ] GitHub Discussions enabled

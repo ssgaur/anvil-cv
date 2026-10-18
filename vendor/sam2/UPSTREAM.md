@@ -41,4 +41,6 @@ git add vendor/sam2 && git commit -m "chore(vendor): refresh sam2 to <SHA>"
 
 ## License
 
-Upstream is Apache 2.0 (see `vendor/sam2/LICENSE`). Compatible with Anvil's Apache 2.0 license. Attribution is in the repo-root `NOTICE` file.
+Upstream is Apache 2.0 (see `vendor/sam2/LICENSE`). It remains Apache-licensed
+third-party material and is not relicensed under Anvil's root PolyForm license.
+Attribution and the exclusion are recorded in the repo-root `NOTICE` file.

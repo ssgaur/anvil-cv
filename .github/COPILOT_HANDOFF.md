@@ -5,13 +5,15 @@ Read it after `.github/copilot-instructions.md` and before touching code.
 
 ## Current focus
 
-We are on **Track B - Product / OSS App**, now moving from OSS polish into
+We are on **Track B - Product / self-hosted app**, now moving from public launch
+polish into
 **paid product development**:
 
 1. Full review management workflow for teams.
 2. Full fine-tuning workflow for domains where base SAM2 fails, such as fruit
    defects.
-3. Feature flags/edition split so OSS stays clean and paid features are gated.
+3. Feature flags/edition split so the public noncommercial edition stays clean
+   and paid features are gated.
 
 Canonical plan: [`docs/PAID_PRODUCT_ROADMAP.md`](../docs/PAID_PRODUCT_ROADMAP.md).
 
@@ -93,7 +95,8 @@ Paid review should not keep stretching `Image.review_status`. Add
 ## Current role foundation
 
 Current RBAC is a single global `User.role` with hierarchy in
-`apps/api/anvil_api/auth.py`. Paid should keep that as OSS fallback and add:
+`apps/api/anvil_api/auth.py`. Paid should keep that as the public-edition
+fallback and add:
 
 - org/project memberships,
 - multiple roles per user,

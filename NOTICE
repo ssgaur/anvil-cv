@@ -1,7 +1,12 @@
 Anvil
-Copyright (c) 2025 Anvil contributors
+Copyright (c) 2025-2026 Shailendra Singh
 
-This product includes software developed by third parties.
+Required Notice: Anvil original source code is Copyright (c) 2025-2026 Shailendra Singh and is made available under the PolyForm Noncommercial License 1.0.0, or under a separate written commercial license.
+
+The root LICENSE applies only to original Anvil material for which the licensor
+has authority to grant rights. Third-party material remains under its own terms.
+
+This product includes software developed by third parties:
 
 ------------------------------------------------------------
 SAM 2: Segment Anything in Images and Videos
@@ -11,3 +16,6 @@ License: Apache License, Version 2.0
 Vendored under: vendor/sam2/
 Original LICENSE preserved at: vendor/sam2/LICENSE
 ------------------------------------------------------------
+
+The license change is prospective. Copies previously distributed with Apache
+License 2.0 remain subject to the license included with those copies.

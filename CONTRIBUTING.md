@@ -44,6 +44,22 @@ cd apps/web && pnpm lint && pnpm typecheck && pnpm test
 
 Conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`.
 
-## License
+## Contribution licensing
 
-By contributing you agree your contributions are licensed under Apache 2.0.
+Anvil uses a public noncommercial license plus separately negotiated commercial
+licenses. That requires the project to have permission to offer accepted
+contributions under both models.
+
+Issue reports, design discussion, and review feedback are welcome without a
+contributor agreement.
+
+Before a code or documentation contribution can be merged, the copyright holder
+must confirm a separate written contributor agreement that permits Anvil to use,
+modify, distribute, sublicense, and relicense that contribution under the
+project's public and commercial licenses. You retain copyright in your
+contribution and may continue to use it independently.
+
+Opening a pull request by itself does not grant the project those relicensing
+rights and does not guarantee that the contribution can be merged. Contact the
+maintainer through the [ssgaur GitHub profile](https://github.com/ssgaur)
+before investing in a substantial contribution.

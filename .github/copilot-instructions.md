@@ -11,13 +11,13 @@ To keep sessions short and focused (avoid 11-checkpoint sprawl), Anvil work runs
 | Track | Goal | Folder anchor (yours to touch) | Folder anchor (DO NOT touch) |
 |---|---|---|---|
 | **A — Launch Sprint** | Distribution sprint: SAM2 fine-tuning benchmark → blog → landing → outreach | `benchmarks/`, `docs/launch/`, landing page repo | `apps/`, `compose.yml` |
-| **B — Product / OSS App** | Make the OSS app feel enterprise-grade: annotation UX, auth, roles, onboarding, docs, launch readiness | `apps/`, `compose.yml`, root configs, `.github/` | `benchmarks/` |
+| **B — Product / self-hosted app** | Make the source-available app feel enterprise-grade: annotation UX, auth, roles, onboarding, docs, launch readiness | `apps/`, `compose.yml`, root configs, `.github/` | `benchmarks/` |
 
 If the user hasn't told you which track, **ask before touching code**. Cross-track changes are allowed only when explicitly requested.
 
 ## TL;DR — what is this?
 
-**Anvil** is an OSS image-annotation platform (V7 Darwin / CVAT competitor) with one differentiator: **built-in SAM2 LoRA fine-tuning** that runs on a single M1 16 GB laptop. The owner (`ssgaur`) is a solo dev building this as an enterprise product targeting computer-vision teams (e.g., retail produce defect detection at Walmart).
+**Anvil** is a source-available image-annotation platform (V7 Darwin / CVAT competitor) with one differentiator: **built-in SAM2 LoRA fine-tuning** that runs on a single M1 16 GB laptop. Noncommercial use is public under PolyForm Noncommercial 1.0.0; commercial use requires a separate paid agreement. The owner (`ssgaur`) is a solo dev building this as an enterprise product targeting computer-vision teams (e.g., retail produce defect detection at Walmart).
 
 Stack: **FastAPI + Postgres + SQLModel** (api), **FastAPI + SAM2 + PyTorch** (ml), **Vite + React + TS + Konva** (web), **Arq + Redis** (worker), pluggable storage (local default).
 
@@ -85,10 +85,10 @@ anvil-cv/
 - Recent Workview polish is complete: visible brush cursor, selection exits
   tools into edit mode, clearer polygon/polyline behavior, OBB creation/edit UX,
   and remaining browser confirms replaced with in-app dialogs.
-- OSS launch readiness is complete: README, demo GIF, sample loader, community
+- Public launch readiness is complete: README, demo GIF, sample loader, community
   files, MkDocs/GitHub Pages workflow, GHCR workflow, onboarding tour, keyboard help.
 - Current strategic direction: paid/Pro team review workflows + Model Studio
-  fine-tuning, gated behind OSS/Pro feature flags. See
+  fine-tuning, gated behind existing edition feature flags. See
   [docs/PAID_PRODUCT_ROADMAP.md](../docs/PAID_PRODUCT_ROADMAP.md).
 - Latest known-good state: `main` at or after
   `cbdfa2d fix(web): replace remaining browser confirms with app dialogs`.
@@ -98,7 +98,7 @@ anvil-cv/
 
 ## Local dev — start the app
 
-Preferred OSS path:
+Preferred self-hosted path:
 
 ```bash
 cp .env.example .env
