@@ -10,15 +10,18 @@ The single page where 90% of user time is spent: `WorkviewPage.tsx`.
 
 | Tool | Shortcut | What it does |
 | --- | --- | --- |
-| **Polygon** | `P` | Click to drop vertices, double-click or `Enter` to close |
-| **Bbox** | `B` | Drag to draw. **8-handle resize** (4 corners + 4 edges) + body drag to move |
-| **Brush** | `R` | Paint a mask. On release, marching-squares converts paint → polygon |
-| **Click-to-segment** | `S` | Single click = SAM2 mask. **Multi-prompt:** Shift-click = positive, Alt-click = negative, drag = box prompt. All combined |
-| **Vertex edit** | (auto) | Selected polygon — drag a vertex, click a midpoint to insert |
-| **Pan** | hold `Space` + drag | |
-| **Undo / Redo** | `⌘Z` / `⇧⌘Z` | Per-image stack, last 20 actions |
-| **Fit / 1:1** | `F` / `1` | Snap zoom |
-| **Cheatsheet** | `?` or `H` | Toggle help overlay |
+| **Pan** | `V` or hold `Space` | Pan across the canvas |
+| **Auto-Annotate (SAM2 / SAM3)** | `A` | Click = positive point, Shift-click = add positive point, Alt-click = negative point, drag = box prompt. When **`Model: base SAM3`** is selected in the top bar, also exposes the **SAM3 concept bar** (`Find all ✨` + confidence threshold slider) for open-vocabulary multi-instance segmentation |
+| **Polygon** | `P` | Click to add vertices, `Enter` to close and save (≥ 3 points) |
+| **Polyline** | `L` | Click to add vertices, `Enter` to save open path (≥ 2 points) |
+| **Bounding Box** | `B` | Drag to draw. **8-handle resize** (4 corners + 4 edges) + body drag to move |
+| **Rotated Box (OBB)** | `O` | Drag to place, then drag the orange rotation handle or corner handles |
+| **Brush** | `R` | Paint a mask (`Shift` to erase, `[` / `]` to resize, `Enter` to extract polygon) |
+| **Keypoints** | `K` | Drop keypoints in schema order (`Cmd/Ctrl-click` for occluded `v=1`) |
+| **Comment Pin** | `T` | Click on the image to anchor a spatial review note at `(x, y)` |
+| **Undo / Redo** | `⌘Z` / `⇧⌘Z` | Per-image history stack (up to 20 operations) |
+| **Fit / 1:1** | `F` / `0` | Fit image to viewport or reset to 100% zoom |
+| **Cheatsheet** | `?` or `H` | Toggle keyboard shortcuts & tips modal |
 
 ### Interaction polish
 

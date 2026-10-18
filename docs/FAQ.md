@@ -2,82 +2,80 @@
 
 ### What is Anvil?
 
-A source-available image annotation platform with built-in SAM2 fine-tuning.
-Think V7 Darwin / CVAT / Roboflow, but the model gets better at **your**
-classes as your team labels.
+Anvil is a self-hosted, source-available computer vision annotation platform that integrates **SAM2 interactive segmentation**, **SAM3 open-vocabulary concept segmentation**, and **in-loop SAM2 LoRA fine-tuning** in a single web workspace.
 
-### Who is this for?
+### Who is Anvil built for?
 
-Computer-vision teams labeling image data — retail (defect/SKU), manufacturing inspection, document layout, security, agriculture. Especially teams who can't justify $500/seat/month for V7 Darwin and don't want to roll their own labeling stack on top of CVAT.
+Computer vision and data operations teams working on specialized visual domains—manufacturing defect inspection, retail quality control, agriculture, medical imaging, and document layout—where off-the-shelf foundation models underperform on domain-specific edge cases and data cannot leave private infrastructure.
 
-### Why does fine-tuning matter? V7 Darwin already auto-annotates with SAM2.
+### How does Anvil compare to open-source tools (CVAT, Label Studio, X-AnyLabeling, Labelme) and commercial SaaS (V7 Darwin, Roboflow, Labelbox)?
 
-Base SAM2 is great at "obvious" objects — a clear cucumber on a white background. It struggles with your domain-specific edge cases: bruises on limes, deformed strawberries, partial occlusion, your store's specific lighting. **Fine-tuning teaches SAM2 your domain.** V7 doesn't expose this; we make it a button.
+- **CVAT & Label Studio** are general-purpose annotation platforms. Using SAM2 or SAM3 with them requires deploying and maintaining separate Nuclio serverless functions or external ML backend containers, and neither includes built-in mask-decoder LoRA fine-tuning, adapter versioning, or side-by-side A/B IoU comparison.
+- **X-AnyLabeling & Labelme** are single-user desktop applications. They are convenient for local file labeling but lack multi-user web collaboration, role-based access control (RBAC), review state machines, and server-side training loops.
+- **V7 Darwin, Roboflow & Labelbox** are proprietary cloud SaaS products priced around per-seat subscriptions and usage/training credits, requiring data upload to vendor cloud storage unless under custom enterprise on-premises contracts.
+- **Anvil** runs entirely on your own hardware via `docker compose`, ships both **SAM2** and **SAM3** behind a unified memory-governed provider registry, and trains domain-specific **SAM2 LoRA adapters** directly from approved project annotations.
 
-### Will it run on my MacBook?
+### Why does in-loop fine-tuning matter if SAM2 and SAM3 are already available?
 
-Yes. The whole stack — API + ML + web + Postgres — runs on an M1 16 GB MacBook. Inference uses MPS, training uses CPU (MPS backward is flaky for some attention ops in PyTorch 2.x). LoRA training on a few dozen images takes seconds to a couple of minutes.
+Zero-shot SAM2 and SAM3 perform well on common everyday objects (`truck`, `wheel`, `person`), but confidence and boundary precision degrade on specialized industrial or agricultural targets—such as subtle surface bruises, sunken defects, or cluttered bins.
 
-### How is fine-tuning so fast?
+In Anvil, you can use **SAM3** (`Find all ✨` or point/box prompts) and **SAM2** to bootstrap initial labels, curate them in Workview, and train a **SAM2 LoRA adapter** (`~47K` trainable parameters) in seconds to minutes. Subsequent interactive labeling and uncertainty ranking then use your domain-adapted model.
 
-Two reasons: (1) we **cache image embeddings on disk** at upload time so the heavy SAM2 encoder never runs during training, and (2) we use **LoRA** to only train ~47K parameters (the mask decoder's attention adapters), not the whole 100M+ model. Full deep-dive: [FINE_TUNING.md](FINE_TUNING.md).
+### How do SAM2 and SAM3 differ inside Anvil?
 
-### What about GPU servers / on-prem deployments?
+| Capability | SAM2 (`sam2.1_hiera_b+`) | SAM3 (`facebook/sam3`) |
+| --- | --- | --- |
+| **Primary strength** | Fast interactive point/box refinement + LoRA fine-tuning | Zero-shot open-vocabulary text concept discovery (`Find all ✨`) + point/box prompts |
+| **Parameters / memory** | ~80M params (~2.1 GB RSS) | ~840M params (~3.5 GB RSS in fp32) |
+| **Checkpoint delivery** | Public URL; auto-downloaded on `docker compose up` | Gated Hugging Face repo; enabled via `hf auth login && make sam3-setup` |
+| **Encoder caching** | Pre-computed `.npz` per image on upload | On-demand via Hugging Face Transformers |
+| **In-app LoRA fine-tuning** | Supported today (`~200 KB` adapter `.pt`) | Bootstraps annotations for SAM2 LoRA today; cross-attention adapter roadmap documented in [FINE_TUNING.md](FINE_TUNING.md) |
 
-The same code runs unchanged on CUDA. `ML_DEVICE=auto` in `.env` picks the best available. For multi-tenant production we recommend running the ML service on a GPU box and the API on a small CPU box — they communicate over HTTP.
+### Why aren't SAM3 weights downloaded automatically like SAM2?
 
-### What annotation types are supported?
+Meta distributes `facebook/sam3` as a gated repository on Hugging Face that requires accepting their license terms under your own account. Anvil mounts your host Hugging Face cache (`~/.cache/huggingface` → `/hf-cache`) into the `ml` container so weights are never baked into Docker images or re-downloaded across rebuilds.
 
-Polygon, Bbox, Brush, Click-to-segment (multi-prompt SAM2). Polylines, keypoints, directional vectors, instance IDs are out of scope for v0. Video is also out of scope.
+Run:
 
-### How do I export to my training pipeline?
+```bash
+hf auth login
+make sam3-setup
+```
 
-COCO instance-segmentation export ships today (`/api/datasets/{id}/export/coco`). YOLO and HuggingFace exports are on the roadmap.
+If SAM3 weights are not present, Anvil starts normally with SAM2 enabled.
 
-### Can I import existing labels from another tool?
+### Does the stack run on a standard laptop?
 
-Yes — drag-drop a COCO ZIP onto a dataset and we bootstrap classes + annotations. CVAT and V7 export to COCO, so this covers most migrations.
+Yes. The full stack (PostgreSQL, Redis, MinIO, API, ML, worker, and web UI) runs on a 16 GB Apple Silicon MacBook or Linux workstation. Anvil's model registry enforces `ANVIL_MODEL_MEMORY_BUDGET_GB` (default `6.0 GB`) and evicts the least-recently-used model when switching between SAM2 and SAM3 to prevent container OOM kills.
 
-### How do you handle review / QA?
+### How is SAM2 LoRA fine-tuning fast enough for CPU?
 
-Per-image review status (approved / rejected / needs-changes), predefined reject reasons, and **spatial pin comments** anchored to canvas coordinates. Per-annotator quality dashboard is in progress.
+1. **Pre-computed encoder cache:** The worker runs SAM2's heavy Hiera image encoder once at upload time and stores `embeddings/<image_id>.npz`. The encoder never runs during training.
+2. **Low-rank decoder adaptation:** Only `q_proj`, `k_proj`, `v_proj`, and `out_proj` in the mask decoder (~47K parameters at rank 8) are trained. See [FINE_TUNING.md](FINE_TUNING.md).
 
-### Is there team / RBAC support?
+### What annotation geometries and taxonomy features are supported?
 
-Yes. Anvil ships admin/reviewer/labeler/viewer roles, an admin user-management
-screen, review locks for approved images, and signed file URLs.
+- **Geometries:** Polygon (with vertex/midpoint editing), Bounding Box (8-handle resize), Rotated Bounding Box (`OBB`), Polyline, Keypoints (with per-class skeleton graphs and occlusion states), and Brush (raster paint to contour polygon).
+- **Taxonomy:** Multi-level class hierarchies (up to 5 levels) and per-class structured properties (`single`, `multi`, `text`).
+- **Import / Export:** Drag-and-drop COCO ZIP import and one-click COCO ZIP export (preserving standard COCO segmentation/keypoints plus Anvil extensions for `obb`, `polyline`, and class hierarchy paths).
 
-### How do I self-host in production?
+### How do review workflows and RBAC work?
 
-Easiest path is `docker compose up -d --build` from a server with Docker installed — that gives you the full stack on one box (Postgres + Redis + MinIO + API + ML + worker + web). For real production, swap MinIO for S3, point `DATABASE_URL` at managed Postgres, and run the ML service on a GPU box. See [ARCHITECTURE.md](ARCHITECTURE.md) for the deployment topology.
+Anvil enforces four roles (`admin`, `reviewer`, `labeler`, `viewer`). Images progress through `new → in_progress → submitted → approved / rejected`. Reviewers cannot approve or reject their own submissions, rejections require a documented reason, and spatial pin comments can be anchored directly to `(x, y)` image coordinates.
 
-### What's the license?
+### What is the license?
 
-Noncommercial use is available under PolyForm Noncommercial 1.0.0. Commercial
-use requires a separate written paid license and may use revenue share,
-subscription, usage, seat, or deployment pricing. See
-[LICENSE](https://github.com/ssgaur/anvil-cv/blob/main/LICENSE) and
-[COMMERCIAL_LICENSE.md](https://github.com/ssgaur/anvil-cv/blob/main/COMMERCIAL_LICENSE.md).
+- **Noncommercial use:** Available under the [PolyForm Noncommercial License 1.0.0](https://github.com/ssgaur/anvil-cv/blob/main/LICENSE).
+- **Commercial use:** Any use in a commercial or for-profit business context requires a separate written paid license. Commercial agreements can be structured as annual/monthly subscriptions, per-seat or per-deployment licenses, usage-based tiers, or revenue share. See [COMMERCIAL_LICENSE.md](https://github.com/ssgaur/anvil-cv/blob/main/COMMERCIAL_LICENSE.md).
 
-Copies previously received under Apache License 2.0 keep the rights granted with
-those copies. The new terms apply prospectively to copies and releases carrying
-the new license.
+Copies previously received under Apache License 2.0 retain the rights granted with those copies; the PolyForm Noncommercial terms apply prospectively.
 
-### How does Anvil compare to CVAT / Label Studio?
+### How do I diagnose container or memory issues?
 
-Both are great open-source labelers. Neither has built-in fine-tuning. Anvil is
-source-available rather than OSI open source; its bet is that the model-loop is
-the differentiator — a labeling tool that **gets faster as you label** changes
-the unit economics of every CV team.
+Run:
 
-### Can I contribute?
+```bash
+python3 scripts/diagnose.py
+```
 
-Yes — see [CONTRIBUTING.md](https://github.com/ssgaur/anvil-cv/blob/main/CONTRIBUTING.md). The fastest help right now: try it, file issues. The next-fastest: pick something off [ROADMAP.md](ROADMAP.md).
-
-### How do I report a bug?
-
-Open an issue with the bug template. Include `logs/api.log` and `logs/ml.log` tails plus reproduction steps.
-
-### What's "Anvil"? Final name?
-
-Working title. `finalize-name-domain` is on the roadmap. Suggestions welcome.
+It inspects container states, exit codes (including `137` OOM kills), service readiness, memory pressure, failed image embeddings, and recent structured incident logs in `logs/anvil.jsonl`. See [OBSERVABILITY.md](OBSERVABILITY.md).

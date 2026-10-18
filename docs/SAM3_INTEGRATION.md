@@ -1,80 +1,50 @@
-# SAM3 Integration — Verified Findings (Phase 0)
+# SAM3 Integration — Architecture, Setup & Benchmarks
 
-Status: **audit only, no application code changed.** This records facts verified
-on 2026-08-13 so a later session does not have to re-derive them.
+Status: **Shipped in ML service, REST API, and Workview UI.**
 
 Upstream reference commit: `facebookresearch/sam3@96914d2`.
 
-## Local environment (verified)
+## Quick Setup (Gated Hugging Face Weights)
+
+Meta distributes `facebook/sam3` as a gated repository on Hugging Face. Anvil mounts the host's Hugging Face cache (`${HF_CACHE_DIR:-${HOME}/.cache/huggingface}` → `/hf-cache`) into the `ml` container so weights are downloaded once on the host and never baked into Docker images.
+
+1. Accept the license on Hugging Face: **<https://huggingface.co/facebook/sam3>**
+2. Authenticate on the host (or set `HF_TOKEN=hf_...` in `.env`) and download only the Transformers `model.safetensors` + tokenizer/config files (3.2 GB, skipping the duplicate 3.2 GB `sam3.pt` checkpoint):
+
+```bash
+hf auth login
+make sam3-setup
+```
+
+If SAM3 weights are not present or not authenticated, Anvil starts normally with SAM2 active and only loads SAM3 on demand when selected in Workview.
+
+## Verified Environment & Checkpoint Layout
 
 | Item | State |
 |---|---|
-| HF CLI | logged in as `ssgaur` (org AVTTech); gated access to `facebook/sam3` + `sam3.1` resolves |
-| `transformers` | **5.15.0** installed in `./.venv` — `Sam3Model` + `Sam3Processor` import OK |
-| SAM3 weights | `~/.cache/huggingface/hub/models--facebook--sam3`, **3.2 GB** |
-| SAM3 GitHub source | **NOT checked out locally.** Only `vendor/sam2` exists |
-| ML container | `torch 2.13.0+cu130`, `cuda False`, no `transformers` |
+| Hugging Face repo | `facebook/sam3` (gated access required) |
+| Inference runtime | `transformers` (`Sam3Model` + `Sam3Processor`, `torch.float32`) |
+| Weights used for inference | `model.safetensors` (**3.2 GB**) + config/tokenizer files in `~/.cache/huggingface/hub/models--facebook--sam3` |
+| Native training weights | `sam3.pt` (**3.2 GB**) — identical weights in native repo format; excluded by `make sam3-setup` to save 3.2 GB disk space |
 
-### Downloaded deliberately minimal
+## Implementation Status
 
-`sam3.pt` (3.2 GB, native-repo format) and `model.safetensors` (3.2 GB,
-Transformers format) are the **same weights**. On the Transformers path only
-`model.safetensors` + config/tokenizer files are needed, so `sam3.pt` was
-excluded — saving 3.2 GB.
+**Complete across ML service, API, and Workview UI.** SAM2 behavior is unchanged.
 
-## SAM3 smoke test on Mac M1 (16 GB, CPU)
-
-Real result, not projected. Model reports **840.4M parameters** (matches the
-~848M claim). Load ~5 s; inference 6–12 s per prompt on CPU.
-
-Official `assets/images/truck.jpg`:
-
-| Prompt | Instances | Scores |
+| Layer | Component | File |
 |---|---|---|
-| `truck` | 1 | 0.93 |
-| `wheel` | **4** | 0.96, 0.96, 0.90, 0.91 |
-| `motorcycle` | **0** | — (correct true negative) |
+| ML | Provider protocol, `Capabilities`, `Instance` | `apps/ml/anvil_ml/providers/base.py` |
+| ML | SAM2 wrapper (delegates to `engine.py`, no behavior change) | `apps/ml/anvil_ml/providers/sam2_provider.py` |
+| ML | SAM3 via Transformers (text concepts + point/box prompts → polygons + RLE) | `apps/ml/anvil_ml/providers/sam3_provider.py` |
+| ML | Memory-aware lazy loading + LRU eviction (`ANVIL_MODEL_MEMORY_BUDGET_GB`) | `apps/ml/anvil_ml/providers/registry.py` |
+| ML | `GET /capabilities`, `POST /predict`, `POST /predict_concept`, `POST /models/{name}/release` | `apps/ml/anvil_ml/main.py` |
+| API | `POST /api/images/{id}/predict` (`base_model="sam2" \| "sam3"`), `POST /api/images/{id}/predict-concept`, `GET /api/models/capabilities` | `apps/api/anvil_api/routes/images.py`, `routes/models.py` |
+| Web | Top-bar `Model: base SAM3` selector, point/box auto-annotate with SAM3, and floating SAM3 concept bar (`Find all ✨` + threshold slider) | `apps/web/src/pages/WorkviewPage.tsx` |
 
-Masks return at full image resolution (`(4, 1200, 1800)`), boxes in absolute
-xyxy pixels.
-
-This validates three things at once: text-prompted inference, **multi-instance**
-exhaustive segmentation, and a correct **negative** result (Phase 7) — all on a
-machine with no CUDA.
-
-### Threshold behaviour worth knowing
-
-On the cluttered `assets/images/groceries.jpg`, the same pipeline returns **0**
-instances at `threshold=0.5`, and at `threshold=0.05` returns many weak
-candidates (77 for "food", all scores < 0.25). This is a domain/clutter gap, not
-an integration bug — `truck.jpg` proves the path is sound.
-
-Product implications:
-- The detection threshold **must be user-tunable**, not hardcoded at 0.5.
-- "Many candidates, all low confidence" is a strong active-learning signal
-  (Phase 21) and a good argument for fine-tuning.
-
-## Implementation status
-
-**Done — ML layer (STEP 4/5).** SAM2 behaviour unchanged.
-
-| Piece | File |
-|---|---|
-| Provider protocol, `Capabilities`, `Instance` | `apps/ml/anvil_ml/providers/base.py` |
-| SAM2 wrapper (delegates to `engine.py`, no behaviour change) | `providers/sam2_provider.py` |
-| SAM3 via Transformers (text → N instances + RLE) | `providers/sam3_provider.py` |
-| Memory-aware lazy loading + LRU eviction | `providers/registry.py` |
-| `GET /capabilities`, `POST /predict_concept`, `POST /models/{name}/release` | `apps/ml/anvil_ml/main.py` |
-
-Verified in Docker: `wheel` → 4 instances (0.96/0.96/0.90/0.91) with RLE
-preserved; `motorcycle` → 0 (true negative); SAM2 e2e smoketest + COCO
-round-trip + undo/redo + bbox-resize all still pass.
-
-Capability guard rejects `sam2` + text with HTTP 400 **without loading** the
-model (residency stays `false`), so an unsupported request costs no memory.
-
-**Not yet wired:** API routes, canonical Concept/Query schema, and the
-annotation UI. SAM3 is reachable on the ML service but not yet from the app.
+Verified end-to-end in Docker:
+- `wheel` on `truck.jpg` → 4 instances (`0.96, 0.96, 0.90, 0.91`) with RLE preserved; `motorcycle` → `0` (true negative).
+- Point/box prompt and text-concept prompt in Workview (`Model: base SAM3`) both return polygon instances and commit directly to image annotations with full undo/redo support.
+- Capability guard rejects `sam2` + text with HTTP 400 **without loading** the model (residency stays `false`).
 
 ### Memory behaviour on a 16GB Mac
 

@@ -75,8 +75,10 @@ All endpoints are under `/api/` and require `Authorization: Bearer <jwt>` except
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| POST | `/images/{id}/predict` | `{prompts: [{x, y, label}], box?}`. Uses active model version's adapter if set |
-| GET | `/projects/{p}/datasets/{d}/next-uncertain` | returns next image ranked by entropy |
+| POST | `/images/{id}/predict` | `{points?, point_labels?, box?, model_version_id?, base_model?: "sam2" \| "sam3"}`. Uses active SAM2 LoRA adapter when `base_model="sam2"` |
+| POST | `/images/{id}/predict-concept` | `{text, model?: "sam3", threshold?: 0.5, max_instances?: 100}` → multi-instance open-vocabulary segmentation |
+| GET | `/models/capabilities` | Returns foundation model capabilities and residency state (`sam2`, `sam3`) |
+| POST | `/projects/{p}/datasets/{d}/next-uncertain` | Returns next unannotated image ranked by mask-score entropy |
 
 ## Model versions
 

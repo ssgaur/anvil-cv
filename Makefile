@@ -12,10 +12,10 @@
 #   make rebuild    # docker compose build --no-cache
 #   make shell-api / shell-ml / shell-web   # exec into a running container
 
-.PHONY: up down clean logs ps rebuild shell-api shell-ml shell-web help
+.PHONY: up down clean logs ps rebuild sam3-setup shell-api shell-ml shell-web help
 
 help:
-	@echo "Targets: up, down, clean, logs, ps, rebuild, shell-api, shell-ml, shell-web"
+	@echo "Targets: up, down, clean, logs, ps, rebuild, sam3-setup, shell-api, shell-ml, shell-web"
 
 .env:
 	@cp .env.example .env
@@ -45,6 +45,9 @@ ps:
 
 rebuild:
 	docker compose build --no-cache
+
+sam3-setup: .env
+	docker compose exec ml python -c "from huggingface_hub import snapshot_download; import os; path = snapshot_download(os.getenv('SAM3_MODEL_ID', 'facebook/sam3'), ignore_patterns=['sam3.pt', '*.pt']); print('SAM3 weights ready at:', path)"
 
 shell-api:
 	docker compose exec api /bin/bash

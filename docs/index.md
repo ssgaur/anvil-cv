@@ -1,10 +1,8 @@
 # Anvil
 
-Anvil is a source-available image annotation platform with built-in SAM2
-click-to-segment and SAM2 LoRA fine-tuning.
+Anvil is a self-hosted, source-available computer vision annotation platform with built-in **SAM2 interactive segmentation**, **SAM3 open-vocabulary concept segmentation**, and **in-loop SAM2 LoRA fine-tuning**.
 
-It is designed for teams that want the V7/CVAT/Roboflow workflow without
-shipping private images to a hosted SaaS product.
+It is built for engineering teams that require modern foundation-model-assisted labeling and domain adaptation without sending proprietary imagery or model weights to a third-party cloud SaaS.
 
 ## Quick start
 
@@ -16,11 +14,20 @@ docker compose up -d --build
 python3 scripts/load_sample_dataset.py
 ```
 
-Open <http://localhost:5173> and sign in with the dev admin:
+Open <http://localhost:5173> and sign in with the default development admin:
 
 | Email | Password |
 | --- | --- |
 | `admin@anvil.dev` | `admin` |
+
+### Enabling SAM3 (optional)
+
+SAM2 (`sam2.1_hiera_base_plus.pt`) downloads automatically on first start. To also enable **SAM3 (`facebook/sam3`)**, accept the gated model license at <https://huggingface.co/facebook/sam3>, authenticate on your host, and pull the Transformers safetensors weights into your shared cache:
+
+```bash
+hf auth login
+make sam3-setup
+```
 
 ## Privacy stance
 
@@ -38,7 +45,9 @@ Commercial use requires a separate written paid license; see the
 
 - [Features](FEATURES.md)
 - [Architecture](ARCHITECTURE.md)
-- [Fine-tuning](FINE_TUNING.md)
+- [Fine-tuning & Model Adaptation](FINE_TUNING.md)
+- [SAM3 Integration](SAM3_INTEGRATION.md)
+- [Observability](OBSERVABILITY.md)
 - [API](API.md)
 - [Dev setup](DEV_SETUP.md)
 - [Roadmap](ROADMAP.md)

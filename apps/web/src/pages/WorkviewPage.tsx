@@ -9,7 +9,7 @@ import { useAuth } from "../store/auth";
 import { isLabeler, isReviewer } from "../lib/roles";
 import { RejectReasonDialog } from "../components/RejectReasonDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import type { Annotation, ClassProperty, ClassRow, CommentRow, ImageRow, ModelVersion } from "../types";
+import type { Annotation, ClassProperty, ClassRow, CommentRow, ConceptInstance, ImageRow, ModelVersion } from "../types";
 
 type Tool = "pan" | "auto" | "polygon" | "polyline" | "bbox" | "obb" | "brush" | "keypoint" | "comment";
 
@@ -274,10 +274,14 @@ export function WorkviewPage() {
     }
   }
 
-  // Model version selection (null = base SAM2; "active" = use project default)
+  // Model version selection (null = base SAM2; "active" = use project default; "sam3" = base SAM3)
   const [models, setModels] = useState<ModelVersion[]>([]);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
-  const [modelChoice, setModelChoice] = useState<string>("active"); // "active" | "base" | <mv_id>
+  const [modelChoice, setModelChoice] = useState<string>("active"); // "active" | "base" | "sam3" | <mv_id>
+  const isSam3 = modelChoice === "sam3";
+  const [conceptText, setConceptText] = useState("");
+  const [conceptThreshold, setConceptThreshold] = useState(0.4);
+  const [pendingConcept, setPendingConcept] = useState<ConceptInstance[]>([]);
 
   useEffect(() => {
     api.listModelVersions(projectId).then(setModels).catch(() => {});
@@ -286,7 +290,7 @@ export function WorkviewPage() {
 
   // Resolve which model_version_id to send with predict
   const predictModelId = useMemo<string | null | undefined>(() => {
-    if (modelChoice === "base") return null;            // explicit base SAM2
+    if (modelChoice === "base" || modelChoice === "sam3") return null; // explicit base model
     if (modelChoice === "active") return undefined;     // server picks project active
     return modelChoice;                                  // explicit ft version
   }, [modelChoice]);
@@ -499,6 +503,8 @@ export function WorkviewPage() {
         clearCreationState();
         setSelectedAnnId(null); clearEditBuffers();
       }
+      else if (e.key === "Enter" && tool === "auto" && pending) commitPending();
+      else if (e.key === "Enter" && tool === "auto" && pendingConcept.length > 0) commitPendingConcept();
       else if (e.key === "Enter" && tool === "polygon" && polyPoints.length >= 3) commitPolygon();
       else if (e.key === "Enter" && tool === "polyline" && polylinePoints.length >= 2) commitPolyline();
       else if (e.key === "Enter" && tool === "brush" && hasBrushStrokes) commitBrush();
@@ -529,7 +535,7 @@ export function WorkviewPage() {
       window.removeEventListener("blur", blur);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, polyPoints, polylinePoints, activeClassId, image, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp, classes, isEditingAnnotation]);
+  }, [tool, polyPoints, polylinePoints, activeClassId, image, hoverAnnId, siblings, imageId, undoStack, redoStack, hasBrushStrokes, showHelp, classes, isEditingAnnotation, pending, pendingConcept]);
 
   // Helpers
   function imagePoint(stageX: number, stageY: number): [number, number] {
@@ -581,7 +587,7 @@ export function WorkviewPage() {
       setPending(null);
       return;
     }
-    if (!image || image.status !== "ready") return;
+    if (!image || (!isSam3 && image.status !== "ready")) return;
     if (!activeClassId) return;
     let cancelled = false;
     (async () => {
@@ -595,8 +601,17 @@ export function WorkviewPage() {
             prompts.box[0] + prompts.box[2], prompts.box[1] + prompts.box[3],
           ] : undefined,
           ...(predictModelId !== undefined ? { model_version_id: predictModelId } : {}),
+          ...(isSam3 ? { base_model: "sam3" } : {}),
         });
-        if (!cancelled) setPending({ polygon: r.polygon, score: r.score, bbox: r.bbox });
+        if (!cancelled) {
+          if (r.polygon && r.polygon.length >= 3) {
+            setPendingConcept([]);
+            setPending({ polygon: r.polygon, score: r.score, bbox: r.bbox });
+          } else {
+            setPending(null);
+            setError("No object mask found at that prompt.");
+          }
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "predict failed");
       } finally {
@@ -605,11 +620,12 @@ export function WorkviewPage() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [promptsKey, tool, imageId, image?.status, activeClassId, predictModelId]);
+  }, [promptsKey, tool, imageId, image?.status, activeClassId, predictModelId, isSam3]);
 
   function clearPrompts() {
     setPrompts({ points: [], box: null });
     setPending(null);
+    setPendingConcept([]);
     setAutoBoxPreview(null);
     dragStartRef.current = null;
     wasDragRef.current = false;
@@ -656,7 +672,7 @@ export function WorkviewPage() {
     if (ix < 0 || iy < 0 || ix > image.width || iy > image.height) return;
 
     if (tool === "auto") {
-      if (image.status !== "ready") {
+      if (!isSam3 && image.status !== "ready") {
         setError("Image is still embedding. Please wait a few seconds.");
         return;
       }
@@ -872,6 +888,66 @@ export function WorkviewPage() {
       pushOp({ kind: "create", ann: a });
       clearPrompts();
     } catch (err) { setError(err instanceof Error ? err.message : "save failed"); }
+  }
+
+  async function runSam3Concept() {
+    if (!image) return;
+    if (!activeClassId) {
+      setError("Pick a class on the right first.");
+      return;
+    }
+    const clsName = classes.find((c) => c.id === activeClassId)?.name ?? "";
+    const queryText = (conceptText.trim() || clsName).trim();
+    if (!queryText) {
+      setError("Enter a concept phrase or pick a class.");
+      return;
+    }
+    setPredicting(true);
+    setError(null);
+    try {
+      const r = await api.predictConcept(imageId, {
+        text: queryText,
+        model: "sam3",
+        threshold: conceptThreshold,
+      });
+      setPrompts({ points: [], box: null });
+      setPending(null);
+      if (r.instances.length === 0) {
+        setPendingConcept([]);
+        setError(`SAM3 found 0 instances for "${queryText}" at threshold ${conceptThreshold.toFixed(2)}.`);
+      } else {
+        setPendingConcept(r.instances);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "SAM3 concept prediction failed");
+    } finally {
+      setPredicting(false);
+    }
+  }
+
+  async function commitPendingConcept() {
+    if (!image || !activeClassId || pendingConcept.length === 0) return;
+    try {
+      const created: Annotation[] = [];
+      for (const inst of pendingConcept) {
+        if (!inst.polygon || inst.polygon.length < 3) continue;
+        const a = await api.createAnnotation(imageId, {
+          class_id: activeClassId,
+          geometry_type: "polygon",
+          geometry: { points: inst.polygon },
+          source: "model",
+          confidence: inst.score,
+        });
+        created.push(a);
+        pushOp({ kind: "create", ann: a });
+      }
+      if (created.length > 0) {
+        setAnnotations((arr) => [...arr, ...created]);
+      }
+      clearPrompts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "save failed");
+    }
   }
 
   async function deleteAnnotation(id: string) {
@@ -1269,7 +1345,44 @@ export function WorkviewPage() {
         <div ref={containerRef} className="flex-1 relative bg-neutral-800 overflow-hidden">
           {predicting && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-neutral-950 text-xs px-3 py-1 rounded-full font-medium z-10">
-              SAM2 predicting…
+              {isSam3 ? "SAM3 predicting…" : "SAM2 predicting…"}
+            </div>
+          )}
+          {!isEditingAnnotation && tool === "auto" && isSam3 && !predicting && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-neutral-900/95 border border-neutral-700 rounded-lg px-2.5 py-1.5 flex items-center gap-2 text-xs shadow-xl z-10">
+              <span className="text-emerald-400 font-medium">SAM3</span>
+              <input
+                value={conceptText}
+                onChange={(e) => setConceptText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    runSam3Concept();
+                  }
+                }}
+                placeholder={`Concept (default: ${activeClass?.name ?? "class"})`}
+                className="bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100 w-44 outline-none focus:border-emerald-500"
+              />
+              <label className="flex items-center gap-1 text-neutral-400" title="Detection confidence threshold">
+                <span>Thr</span>
+                <input
+                  type="range"
+                  min={0.05}
+                  max={0.95}
+                  step={0.05}
+                  value={conceptThreshold}
+                  onChange={(e) => setConceptThreshold(Number(e.target.value))}
+                  className="w-20"
+                />
+                <span className="w-8 tabular-nums text-neutral-300">{conceptThreshold.toFixed(2)}</span>
+              </label>
+              <button
+                onClick={runSam3Concept}
+                className="bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-medium px-2.5 py-1 rounded"
+                title="Segment all instances matching this concept with SAM3"
+              >
+                Find all ✨
+              </button>
             </div>
           )}
           {error && (
@@ -1277,7 +1390,7 @@ export function WorkviewPage() {
               {error} <button onClick={() => setError(null)} className="ml-2 font-bold">×</button>
             </div>
           )}
-          {image && image.status !== "ready" && tool === "auto" && (
+          {!isSam3 && image && image.status !== "ready" && tool === "auto" && (
             <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-amber-500 text-neutral-950 text-xs px-3 py-1 rounded z-10">
               Embedding… auto-annotate ready in a moment
             </div>
@@ -1730,6 +1843,17 @@ export function WorkviewPage() {
                   dash={[6 / view.scale, 4 / view.scale]}
                 />
               )}
+              {pendingConcept.length > 0 && activeClass && pendingConcept.map((inst, i) => (
+                <Line
+                  key={`pc-${i}`}
+                  points={inst.polygon.flat()}
+                  closed
+                  fill={activeClass.color + "44"}
+                  stroke={activeClass.color}
+                  strokeWidth={2 / view.scale}
+                  dash={[6 / view.scale, 4 / view.scale]}
+                />
+              ))}
               {/* SAM2 prompt markers */}
               {prompts.points.map(([x, y, label], i) => (
                 <Circle
@@ -1946,11 +2070,24 @@ export function WorkviewPage() {
           {/* Pending action bar */}
           {!isEditingAnnotation && pending && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg p-2 flex gap-2 items-center text-sm shadow-xl z-10">
-              <span className="text-emerald-400 px-2">SAM2 score: {pending.score.toFixed(3)}</span>
+              <span className="text-emerald-400 px-2">{isSam3 ? "SAM3" : "SAM2"} score: {pending.score.toFixed(3)}</span>
               <button onClick={commitPending} className="bg-emerald-500 text-neutral-950 px-3 py-1 rounded font-medium hover:bg-emerald-400">
                 Save (Enter)
               </button>
               <button onClick={() => setPending(null)} className="text-neutral-400 px-2 hover:text-neutral-100">
+                Discard (Esc)
+              </button>
+            </div>
+          )}
+          {!isEditingAnnotation && pendingConcept.length > 0 && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-lg p-2 flex gap-2 items-center text-sm shadow-xl z-10">
+              <span className="text-emerald-400 px-2">
+                SAM3 found {pendingConcept.length} instance{pendingConcept.length === 1 ? "" : "s"}
+              </span>
+              <button onClick={commitPendingConcept} className="bg-emerald-500 text-neutral-950 px-3 py-1 rounded font-medium hover:bg-emerald-400">
+                Save all {pendingConcept.length} (Enter)
+              </button>
+              <button onClick={() => setPendingConcept([])} className="text-neutral-400 px-2 hover:text-neutral-100">
                 Discard (Esc)
               </button>
             </div>
@@ -2234,6 +2371,7 @@ function ModelPicker({
     >
       <option value="active">Model: {activeName} (default)</option>
       <option value="base">Model: base SAM2</option>
+      <option value="sam3">Model: base SAM3</option>
       {ready.map((m) => (
         <option key={m.id} value={m.id}>
           Model: {m.name}{(m.metrics?.final_val_iou as number | undefined) !== undefined ? ` · IoU ${(m.metrics.final_val_iou as number).toFixed(2)}` : ""}
