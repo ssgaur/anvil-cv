@@ -1,12 +1,16 @@
 # Anvil
 
-> Open-source image annotation platform with **built-in SAM2 fine-tuning**.
+> Source-available image annotation platform with **built-in SAM2 fine-tuning**.
 
 [![CI](https://github.com/ssgaur/anvil-cv/actions/workflows/ci.yml/badge.svg)](https://github.com/ssgaur/anvil-cv/actions/workflows/ci.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm_Noncommercial_1.0.0-orange.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)]()
 
-Anvil is an OSS alternative to V7 Labs Darwin / CVAT / Label Studio / Roboflow with one differentiator they don't have: the model **learns from your team as you label**. Annotate a few dozen images, click *Fine-tune*, and the next batch is auto-labeled by your domain-specific SAM2. Active learning surfaces the highest-uncertainty images first so every label counts more.
+Anvil is a source-available alternative to V7 Labs Darwin / CVAT / Label
+Studio / Roboflow with one differentiator they don't have: the model **learns
+from your team as you label**. Annotate a few dozen images, click *Fine-tune*,
+and the next batch is auto-labeled by your domain-specific SAM2. Active learning
+surfaces the highest-uncertainty images first so every label counts more.
 
 Runs on a **single M1 16 GB laptop** for development — no GPU cluster required.
 
@@ -23,7 +27,7 @@ labels, models, and users stay in your own deployment.
 
 | | V7 Darwin | CVAT | Label Studio | Roboflow | **Anvil** |
 | ------------------------------------------------ | ----------- | ---- | ------------ | -------- | ----------------- |
-| Open source | no | yes | yes | partial | yes (Apache 2.0) |
+| Public source | no | yes | yes | partial | yes (noncommercial) |
 | Built-in SAM2 click-to-segment | yes | no | partial/plugins | yes | yes |
 | Built-in SAM2 fine-tuning (LoRA) | no | no | no | no | yes |
 | Per-class IoU + A/B model compare | partial | no | no | partial | yes |
@@ -32,7 +36,7 @@ labels, models, and users stay in your own deployment.
 | Spatial review comments | yes | no | partial | no | yes |
 | COCO instance-seg import & export | yes | yes | yes | yes | yes |
 | Telemetry-free by default | no | yes | yes | no | **yes** |
-| Pricing | $500/seat/mo | free | free/enterprise | $$ | **free** |
+| Pricing | $500/seat/mo | free | free/enterprise | $$ | **free noncommercial / commercial license** |
 
 ## What works today (alpha)
 
@@ -154,4 +158,16 @@ anvil-cv/
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Anvil uses a dual-license model:
+
+- **Noncommercial use:** [PolyForm Noncommercial License 1.0.0](LICENSE).
+- **Commercial use:** requires a separate written paid license; see
+  [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md). Commercial terms may include
+  revenue share, subscription, usage, seat, or deployment fees.
+
+This is a **source-available** project, not OSI-approved open source. Third-party
+material, including `vendor/sam2/`, remains under its own license.
+
+The change is prospective. Copies previously received under Apache License 2.0
+retain the rights granted with those copies; the new terms apply to copies and
+releases carrying the new license.

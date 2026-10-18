@@ -1,6 +1,6 @@
 # Anvil
 
-Anvil is an open-source image annotation platform with built-in SAM2
+Anvil is a source-available image annotation platform with built-in SAM2
 click-to-segment and SAM2 LoRA fine-tuning.
 
 It is designed for teams that want the V7/CVAT/Roboflow workflow without
@@ -26,6 +26,13 @@ Open <http://localhost:5173> and sign in with the dev admin:
 
 No telemetry, no product analytics, no phone-home. Your images, labels, model
 versions, and users stay in your own deployment.
+
+## Licensing
+
+Noncommercial use is available under the
+[PolyForm Noncommercial License 1.0.0](https://github.com/ssgaur/anvil-cv/blob/main/LICENSE).
+Commercial use requires a separate written paid license; see the
+[commercial licensing overview](https://github.com/ssgaur/anvil-cv/blob/main/COMMERCIAL_LICENSE.md).
 
 ## Learn more
 

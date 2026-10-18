@@ -2,7 +2,9 @@
 
 ### What is Anvil?
 
-An open-source image annotation platform with built-in SAM2 fine-tuning. Think V7 Darwin / CVAT / Roboflow, but the model gets better at **your** classes as your team labels.
+A source-available image annotation platform with built-in SAM2 fine-tuning.
+Think V7 Darwin / CVAT / Roboflow, but the model gets better at **your**
+classes as your team labels.
 
 ### Who is this for?
 
@@ -51,11 +53,22 @@ Easiest path is `docker compose up -d --build` from a server with Docker install
 
 ### What's the license?
 
-Apache 2.0. Use it commercially, fork it, no restrictions.
+Noncommercial use is available under PolyForm Noncommercial 1.0.0. Commercial
+use requires a separate written paid license and may use revenue share,
+subscription, usage, seat, or deployment pricing. See
+[LICENSE](https://github.com/ssgaur/anvil-cv/blob/main/LICENSE) and
+[COMMERCIAL_LICENSE.md](https://github.com/ssgaur/anvil-cv/blob/main/COMMERCIAL_LICENSE.md).
+
+Copies previously received under Apache License 2.0 keep the rights granted with
+those copies. The new terms apply prospectively to copies and releases carrying
+the new license.
 
 ### How does Anvil compare to CVAT / Label Studio?
 
-Both are great open-source labelers. Neither has built-in fine-tuning. Anvil's bet is that the model-loop is the differentiator — labeling tools are commoditized, but a labeling tool that **gets faster as you label** changes the unit economics of every CV team.
+Both are great open-source labelers. Neither has built-in fine-tuning. Anvil is
+source-available rather than OSI open source; its bet is that the model-loop is
+the differentiator — a labeling tool that **gets faster as you label** changes
+the unit economics of every CV team.
 
 ### Can I contribute?
 

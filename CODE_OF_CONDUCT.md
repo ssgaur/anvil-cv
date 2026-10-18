@@ -1,6 +1,6 @@
 # Code of Conduct
 
-Anvil is an open-source project for people building computer-vision datasets,
+Anvil is a source-available project for people building computer-vision datasets,
 models, and tooling. We want the project to be useful, welcoming, and practical.
 
 ## Expected Behavior
@@ -8,7 +8,7 @@ models, and tooling. We want the project to be useful, welcoming, and practical.
 - Be respectful and assume good intent.
 - Keep discussions focused on the project, the code, and user outcomes.
 - Give constructive feedback with enough context that someone can act on it.
-- Be patient with new contributors and first-time open-source users.
+- Be patient with new contributors and first-time source-code contributors.
 - Credit ideas, bug reports, designs, and prior work when you build on them.
 
 ## Unacceptable Behavior
@@ -37,4 +37,3 @@ project spaces. Serious or repeated violations may lead to a permanent ban.
 
 This code applies to GitHub issues, pull requests, discussions, project chats,
 events, and any official Anvil community spaces.
-
