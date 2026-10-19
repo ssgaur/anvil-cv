@@ -30,37 +30,33 @@ services:
       timeout: 3s
       retries: 10
 
+  # Local object-storage volume host (MinIO retired its public Docker Hub/Quay
+  # images; v0 storage uses the shared /data volume via LocalStorage).
   minio:
-    image: quay.io/minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-anvil}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-anvilanvil}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "mkdir -p /data/${STORAGE_BUCKET:-anvil} && trap : TERM INT; sleep infinity & wait"]
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "test -d /data/${STORAGE_BUCKET:-anvil}"]
+      interval: 5s
+      timeout: 3s
       retries: 10
 
-  # First-run only: create the storage bucket inside MinIO. Idempotent.
+  # First-run only: ensure the storage bucket directory exists. Idempotent.
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: alpine:3.20
     depends_on:
       minio:
         condition: service_healthy
+    volumes:
+      - minio_data:/data
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
-        mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-anvil} ${MINIO_ROOT_PASSWORD:-anvilanvil}
-        mc mb -p local/${STORAGE_BUCKET:-anvil} || true
-        mc anonymous set download local/${STORAGE_BUCKET:-anvil} || true
-        echo 'minio bucket ready'
+        mkdir -p /data/${STORAGE_BUCKET:-anvil}
+        echo 'storage bucket ready'
     restart: "no"
 
   # First-run only: download SAM2 base+ weights (~700 MB) into a named volume,
