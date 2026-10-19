@@ -40,7 +40,14 @@ from anvil_api.models import (
     Project,
     ReviewStatus,
 )
-from anvil_api.schemas import ImageOut, PredictIn, PredictOut, ReviewActionIn
+from anvil_api.schemas import (
+    ImageOut,
+    PredictConceptIn,
+    PredictConceptOut,
+    PredictIn,
+    PredictOut,
+    ReviewActionIn,
+)
 from anvil_api.storage import storage, verify_file_signature
 
 router = APIRouter(tags=["images"])
@@ -419,16 +426,18 @@ async def predict(
     p = session.get(Project, d.project_id) if d else None
     if not p:
         raise HTTPException(404, "image not found")
-    if img.status != ImageStatus.READY:
+    base_model = (body.base_model or "sam2").strip().lower()
+    if base_model == "sam2" and img.status != ImageStatus.READY:
         raise HTTPException(409, f"image not ready (status={img.status})")
 
-    # Resolve adapter: explicit model_version_id wins, else project's active
+    # Resolve adapter: explicit model_version_id wins, else project's active (SAM2 only)
     adapter_path: str | None = None
-    mv_id = body.model_version_id or p.active_model_version_id
-    if mv_id:
-        mv = session.get(ModelVersion, mv_id)
-        if mv and mv.project_id == p.id and mv.status == ModelVersionStatus.READY and mv.adapter_key:
-            adapter_path = storage.absolute_path(mv.adapter_key)
+    if base_model == "sam2":
+        mv_id = body.model_version_id or p.active_model_version_id
+        if mv_id:
+            mv = session.get(ModelVersion, mv_id)
+            if mv and mv.project_id == p.id and mv.status == ModelVersionStatus.READY and mv.adapter_key:
+                adapter_path = storage.absolute_path(mv.adapter_key)
 
     res = await ml_client.predict(
         image_path=storage.absolute_path(img.storage_key),
@@ -437,8 +446,33 @@ async def predict(
         point_labels=body.point_labels,
         box=body.box,
         adapter_path=adapter_path,
+        model=base_model,
     )
     return PredictOut(**res)
+
+
+@router.post("/images/{image_id}/predict-concept", response_model=PredictConceptOut)
+async def predict_concept(
+    image_id: UUID, body: PredictConceptIn, session: SessionDep, _user: RequireLabeler,
+) -> PredictConceptOut:
+    img = session.get(Image, image_id)
+    if not img:
+        raise HTTPException(404, "image not found")
+    d = session.get(Dataset, img.dataset_id)
+    p = session.get(Project, d.project_id) if d else None
+    if not p:
+        raise HTTPException(404, "image not found")
+    try:
+        res = await ml_client.predict_concept(
+            image_path=storage.absolute_path(img.storage_key),
+            text=body.text.strip(),
+            model=body.model,
+            threshold=body.threshold,
+            max_instances=body.max_instances,
+        )
+    except Exception as e:
+        raise HTTPException(400, f"concept prediction failed: {e}") from e
+    return PredictConceptOut(**res)
 
 
 # --------- Active learning ---------

@@ -119,6 +119,7 @@ class PredictRequest(BaseModel):
     point_labels: list[int] | None = None
     box: list[float] | None = None
     adapter_path: str | None = None
+    model: str = "sam2"
 
 
 class TrainItemModel(BaseModel):
@@ -237,6 +238,33 @@ async def embed_endpoint(req: EmbedRequest) -> dict[str, Any]:
 async def predict_endpoint(req: PredictRequest) -> dict[str, Any]:
     if not req.points and not req.box:
         raise HTTPException(400, "either points or box is required")
+    model_name = (req.model or "sam2").strip().lower()
+    if model_name != "sam2":
+        try:
+            provider = get_provider(model_name)
+        except KeyError as e:
+            raise HTTPException(404, e.args[0] if e.args else "unknown model") from e
+        try:
+            inst = await asyncio.to_thread(
+                provider.predict,
+                req.image_path,
+                req.embedding_path,
+                req.points,
+                req.point_labels,
+                req.box,
+                req.adapter_path,
+            )
+            return {
+                "polygon": inst.polygon,
+                "score": inst.score,
+                "bbox": inst.bbox,
+            }
+        except CapabilityError as e:
+            raise HTTPException(400, str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(404, f"missing file: {e}") from e
+        except Exception as e:
+            raise HTTPException(500, f"predict failed: {e}") from e
     try:
         return await asyncio.to_thread(
             predict,

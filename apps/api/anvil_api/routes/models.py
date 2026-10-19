@@ -57,6 +57,12 @@ def _to_out(mv: ModelVersion, *, is_active: bool = False) -> ModelVersionOut:
     )
 
 
+@router.get("/models/capabilities")
+async def get_model_capabilities(_user: RequireAnyAuthed) -> dict:
+    """Return foundation model capabilities (SAM2, SAM3) from the ML service."""
+    return await ml_client.capabilities()
+
+
 @router.get("/projects/{project_id}/model-versions", response_model=list[ModelVersionOut])
 def list_versions(
     project_id: UUID, session: SessionDep, _user: RequireAnyAuthed,

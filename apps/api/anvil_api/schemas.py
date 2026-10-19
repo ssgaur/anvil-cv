@@ -249,12 +249,34 @@ class PredictIn(BaseModel):
     point_labels: list[int] | None = None  # 1=foreground, 0=background
     box: list[float] | None = None  # [x1,y1,x2,y2]
     model_version_id: UUID | None = None  # if set, predict with this fine-tuned adapter
+    base_model: str = "sam2"  # "sam2" (default) | "sam3"
 
 
 class PredictOut(BaseModel):
     polygon: list[list[float]]  # [[x,y], ...] simplified contour
     score: float
     bbox: list[float]  # [x,y,w,h]
+
+
+class PredictConceptIn(BaseModel):
+    text: str = Field(min_length=1, max_length=200)
+    model: str = "sam3"
+    threshold: float = Field(default=0.5, ge=0.01, le=0.99)
+    max_instances: int = Field(default=100, ge=1, le=500)
+
+
+class ConceptInstanceOut(BaseModel):
+    polygon: list[list[float]]
+    bbox: list[float]
+    score: float
+
+
+class PredictConceptOut(BaseModel):
+    model: str
+    text: str
+    threshold: float
+    instances: list[ConceptInstanceOut]
+    count: int
 
 
 # ---- Model versions (fine-tuned adapters)

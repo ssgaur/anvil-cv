@@ -31,6 +31,12 @@ class MLClient:
             r.raise_for_status()
             return r.json()
 
+    async def capabilities(self) -> dict[str, Any]:
+        async with httpx.AsyncClient(base_url=self.base, timeout=30.0) as c:
+            r = await c.get("/capabilities")
+            r.raise_for_status()
+            return r.json()
+
     async def predict(
         self,
         image_path: str,
@@ -39,6 +45,7 @@ class MLClient:
         point_labels: list[int] | None = None,
         box: list[float] | None = None,
         adapter_path: str | None = None,
+        model: str = "sam2",
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(base_url=self.base, timeout=120.0) as c:
             r = await c.post(
@@ -50,6 +57,29 @@ class MLClient:
                     "point_labels": point_labels,
                     "box": box,
                     "adapter_path": adapter_path,
+                    "model": model,
+                },
+            )
+            r.raise_for_status()
+            return r.json()
+
+    async def predict_concept(
+        self,
+        image_path: str,
+        text: str,
+        model: str = "sam3",
+        threshold: float = 0.5,
+        max_instances: int = 100,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(base_url=self.base, timeout=180.0) as c:
+            r = await c.post(
+                "/predict_concept",
+                json={
+                    "image_path": image_path,
+                    "text": text,
+                    "model": model,
+                    "threshold": threshold,
+                    "max_instances": max_instances,
                 },
             )
             r.raise_for_status()

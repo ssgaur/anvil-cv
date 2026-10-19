@@ -24,8 +24,8 @@ from anvil_ml.providers.base import Capabilities, CapabilityError, Instance
 log = logging.getLogger("anvil.ml.sam3")
 
 _CAPS = Capabilities(
-    point=False,   # interactive refinement stays with SAM2 for now
-    box=False,
+    point=True,
+    box=True,
     text=True,
     mask=False,
     multi_instance=True,
@@ -63,9 +63,17 @@ class SAM3Provider:
 
             model_id = os.getenv("SAM3_MODEL_ID", DEFAULT_MODEL_ID)
             t0 = time.time()
-            self._processor = Sam3Processor.from_pretrained(model_id)
-            # fp32 deliberately: see module docstring.
-            self._model = Sam3Model.from_pretrained(model_id, dtype=torch.float32)
+            try:
+                self._processor = Sam3Processor.from_pretrained(model_id)
+                # fp32 deliberately: see module docstring.
+                self._model = Sam3Model.from_pretrained(model_id, dtype=torch.float32)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Unable to load SAM3 weights ({model_id}). "
+                    "facebook/sam3 is a gated Hugging Face repository: accept the license at "
+                    "https://huggingface.co/facebook/sam3, authenticate on the host with "
+                    "`hf auth login` (or set HF_TOKEN in .env), and run `make sam3-setup`."
+                ) from e
             self._model.eval()
             log.info(
                 "sam3_loaded",
@@ -89,10 +97,117 @@ class SAM3Provider:
         box: list[float] | None = None,
         adapter_path: str | None = None,
     ) -> Instance:
-        raise CapabilityError(
-            "sam3 in Anvil currently supports text concept prompts only; "
-            "use SAM2 for point/box refinement"
+        import time
+
+        import torch
+        from PIL import Image as PILImage
+
+        if not points and not box:
+            raise CapabilityError("either points or box is required for SAM3 predict")
+
+        self.load()
+        img = PILImage.open(image_path).convert("RGB")
+        w, h = img.size
+
+        prompt_boxes: list[list[float]] = []
+        prompt_labels: list[int] = []
+
+        if box and len(box) >= 4:
+            x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+            prompt_boxes.append([
+                max(0.0, min(x1, x2)),
+                max(0.0, min(y1, y2)),
+                min(float(w), max(x1, x2)),
+                min(float(h), max(y1, y2)),
+            ])
+            prompt_labels.append(1)
+
+        pos_pts: list[tuple[int, int]] = []
+        neg_pts: list[tuple[int, int]] = []
+        if points:
+            r = max(12.0, min(w, h) * 0.03)
+            labels = point_labels or [1] * len(points)
+            for pt, lbl in zip(points, labels, strict=False):
+                px, py = float(pt[0]), float(pt[1])
+                ix = max(0, min(w - 1, int(round(px))))
+                iy = max(0, min(h - 1, int(round(py))))
+                if int(lbl) == 1:
+                    pos_pts.append((ix, iy))
+                else:
+                    neg_pts.append((ix, iy))
+                prompt_boxes.append([
+                    max(0.0, px - r),
+                    max(0.0, py - r),
+                    min(float(w), px + r),
+                    min(float(h), py + r),
+                ])
+                prompt_labels.append(1 if int(lbl) == 1 else 0)
+
+        t0 = time.time()
+        inputs = self._processor(
+            images=img,
+            input_boxes=[prompt_boxes],
+            input_boxes_labels=[prompt_labels],
+            return_tensors="pt",
         )
+        with torch.no_grad():
+            outputs = self._model(**inputs)
+
+        results = self._processor.post_process_instance_segmentation(
+            outputs,
+            threshold=0.05,
+            mask_threshold=0.5,
+            target_sizes=inputs.get("original_sizes").tolist(),
+        )[0]
+
+        masks = results.get("masks")
+        boxes = results.get("boxes")
+        scores = results.get("scores")
+
+        best_instance: Instance | None = None
+        best_rank: tuple[int, int, float] = (-999, 0, -1.0)
+
+        n_cands = len(scores) if scores is not None else 0
+        for i in range(n_cands):
+            mask = masks[i].cpu().numpy().astype(np.uint8)
+            polygon = _mask_to_polygon(mask)
+            if not polygon:
+                continue
+            score = float(scores[i])
+            pos_hits = sum(1 for (ix, iy) in pos_pts if mask[iy, ix] > 0)
+            neg_hits = sum(1 for (ix, iy) in neg_pts if mask[iy, ix] > 0)
+            in_box_ok = 1
+            if box and len(box) >= 4:
+                bx1 = max(0, min(w - 1, int(round(min(box[0], box[2])))))
+                by1 = max(0, min(h - 1, int(round(min(box[1], box[3])))))
+                bx2 = max(bx1 + 1, min(w, int(round(max(box[0], box[2])))))
+                by2 = max(by1 + 1, min(h, int(round(max(box[1], box[3])))))
+                total_area = float(mask.sum()) or 1.0
+                inside_area = float(mask[by1:by2, bx1:bx2].sum())
+                in_box_ok = 1 if (inside_area / total_area) >= 0.5 else 0
+
+            rank = (pos_hits - neg_hits, in_box_ok, score)
+            if rank > best_rank:
+                best_rank = rank
+                best_instance = Instance(
+                    polygon=polygon,
+                    bbox=_xyxy_to_xywh([float(v) for v in boxes[i]]),
+                    score=score,
+                    mask_rle=_encode_rle(mask),
+                )
+
+        log.info(
+            "sam3_predict",
+            extra={
+                "n_points": len(points or []),
+                "has_box": bool(box),
+                "score": best_instance.score if best_instance else 0.0,
+                "duration_ms": round((time.time() - t0) * 1000, 2),
+            },
+        )
+        if best_instance is None:
+            return Instance(polygon=[], bbox=[0.0, 0.0, 0.0, 0.0], score=0.0, mask_rle=None)
+        return best_instance
 
     def predict_concept(
         self,

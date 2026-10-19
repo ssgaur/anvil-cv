@@ -164,3 +164,17 @@ export interface PredictResponse {
   score: number;
   bbox: [number, number, number, number];
 }
+
+export interface ConceptInstance {
+  polygon: [number, number][];
+  bbox: [number, number, number, number];
+  score: number;
+}
+
+export interface PredictConceptResponse {
+  model: string;
+  text: string;
+  threshold: number;
+  instances: ConceptInstance[];
+  count: number;
+}

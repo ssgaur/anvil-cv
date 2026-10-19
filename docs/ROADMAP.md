@@ -56,30 +56,22 @@ fine-tuning workflow stages, and the eight paid milestones.
 - [x] `anvil-cli` backup + restore — `16848db`
 - [ ] **`quality-dashboard`** — per-annotator throughput + IoU agreement matrix
 
-## Phase 4 — Polish & launch open
-- [ ] **`finalize-name-domain`** — secure final name + domain (anvil.cv?)
-- [ ] **`docs-site`** — Astro Starlight built from `docs/`
-- [ ] **`public-demo`** — Hetzner + Replicate-hosted demo project
-- [ ] **`launch-post`** — Show HN / Reddit / dev.to write-up
-- [ ] **`launch`** — actually press post
+## Phase 4 — Foundation Model Expansion (SAM3)
+- [x] Provider abstraction (`SAM2Provider`, `SAM3Provider`) with memory-budget LRU eviction (`ANVIL_MODEL_MEMORY_BUDGET_GB`)
+- [x] SAM3 open-vocabulary concept segmentation (`POST /api/images/{id}/predict-concept`) + tunable threshold
+- [x] SAM3 interactive point/box segmentation (`POST /api/images/{id}/predict` with `base_model="sam3"`)
+- [x] Workview `Model: base SAM3` selector + floating SAM3 concept bar (`Find all ✨`)
+- [x] Host-cached Hugging Face setup (`make sam3-setup`)
 
 ## Phase 5 — Paid / Pro product track
-- [ ] **`paid-feature-flag-foundation`** — OSS/Pro edition flags, API/UI guards, permission vocabulary
-- [ ] **`paid-project-memberships`** — org/project memberships, multiple roles per user, team admin UI
+- [ ] **`paid-feature-flag-foundation`** — Edition flags, API/UI guards, permission vocabulary
+- [ ] **`paid-project-memberships`** — Org/project memberships, multiple roles per user, team admin UI
 - [ ] **`paid-review-queue-mvp`** — WorkItem/Assignment, My Queue, assign/reassign, workload counts
-- [ ] **`paid-workflow-engine`** — workflow/stage/edge schema, accepted/rejected routing, default workflow
-- [ ] **`paid-workflow-builder-ui`** — V7-inspired canvas, stage palette, node config, item counts
-- [ ] **`paid-advanced-review`** — second review, consensus, rejection issue threads, audit/analytics
-- [ ] **`paid-finetuning-studio-mvp`** — training snapshots, approved-label dataset builder, eval/deploy/rollback
-- [ ] **`paid-defect-finetuning-ai-review`** — crop sampling, hard negatives, small-object metrics, AI review, active learning
+- [ ] **`paid-workflow-engine`** — Workflow/stage/edge schema, accepted/rejected routing, default workflow
+- [ ] **`paid-workflow-builder-ui`** — Workflow canvas, stage palette, node config, item counts
+- [ ] **`paid-advanced-review`** — Second review, consensus, rejection issue threads, audit/analytics
+- [ ] **`paid-finetuning-studio-mvp`** — Training snapshots, approved-label dataset builder, eval/deploy/rollback
+- [ ] **`paid-defect-finetuning-ai-review`** — Crop sampling, hard negatives, small-object metrics, AI review, active learning
 
-## Out of scope (v0)
-- Workflow Builder (planned for paid/Pro; see [Paid Product Roadmap](PAID_PRODUCT_ROADMAP.md))
-- Polyline / Keypoint / Directional Vector / Instance ID tools
-- Video annotation (multi-frame / masklets)
-- Multi-org SaaS billing (paid/Pro foundation planned; billing itself later)
-- SSO / SAML
-- Consensus / N-of-M annotation (planned for paid/Pro)
-
-## Future ideas (post-v0, ungroomed)
+## Future Backlog
 See [FUTURE.md](FUTURE.md).

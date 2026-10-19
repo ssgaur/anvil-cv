@@ -1,5 +1,5 @@
 import type {
-  AdminUser, Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, CompareResult, Dataset, ImageRow, KeypointSchema, ModelVersion, PredictResponse, Project, ReviewStatus, User, UserRole,
+  AdminUser, Annotation, ClassProperty, ClassPropertyType, ClassRow, CommentRow, CompareResult, Dataset, ImageRow, KeypointSchema, ModelVersion, PredictConceptResponse, PredictResponse, Project, ReviewStatus, User, UserRole,
 } from "../types";
 
 export type ImageSort =
@@ -331,8 +331,15 @@ export const api = {
   predict: (imageId: string, body: {
     points?: [number, number][]; point_labels?: number[]; box?: [number, number, number, number];
     model_version_id?: string | null;
+    base_model?: "sam2" | "sam3";
   }) =>
     req<PredictResponse>(`/api/images/${imageId}/predict`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  predictConcept: (imageId: string, body: {
+    text: string; model?: string; threshold?: number; max_instances?: number;
+  }) =>
+    req<PredictConceptResponse>(`/api/images/${imageId}/predict-concept`, {
       method: "POST", body: JSON.stringify(body),
     }),
 
